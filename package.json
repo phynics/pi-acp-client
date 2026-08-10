@@ -5,9 +5,18 @@
   "type": "module",
   "pi": { "extensions": ["./index.ts"] },
   "files": ["index.ts", "acp.ts", "config.ts", "test/", "README.md", "LICENSE"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.1"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@types/node": "26.2.0",
+    "typescript": "7.0.2"
+  },
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
-    "check": "node --experimental-strip-types --check index.ts && node --experimental-strip-types --check acp.ts && node --experimental-strip-types --check config.ts",
+    "check": "tsc --noEmit && node --experimental-strip-types --check index.ts && node --experimental-strip-types --check acp.ts && node --experimental-strip-types --check config.ts",
+    "smoke:loader": "node test/loader-smoke.mjs",
     "pack:check": "npm pack --dry-run"
   }
 }

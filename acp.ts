@@ -20,6 +20,18 @@ export type ACPClientOptions = {
   onPermission?: (params: any) => Promise<any>;
 };
 
+export class ACPRequestError extends Error {
+  readonly code: number;
+  readonly data: unknown;
+
+  constructor(message: string, code: number, data?: unknown) {
+    super(message);
+    this.name = "ACPRequestError";
+    this.code = code;
+    this.data = data;
+  }
+}
+
 /** Minimal stable ACP v1 client. Gnostic-specific behavior is deliberately
  * limited to opaque `_meta` forwarding and is not part of this class. */
 export class ACPClient {
@@ -160,7 +172,7 @@ export class ACPClient {
         return;
       }
       if (typeof message.method === "string") {
-        if (message.method === "session/request_permission" && typeof message.id === "number") {
+        if (message.method === "session/request_permission" && (typeof message.id === "number" || typeof message.id === "string")) {
           void this.answerPermission(message);
         } else {
           this.options.onNotification?.({ method: message.method, params: message.params });
@@ -169,7 +181,11 @@ export class ACPClient {
         const waiter = this.pending.get(message.id);
         if (!waiter) continue;
         this.pending.delete(message.id);
-        if (message.error) waiter.reject(new Error(message.error.message ?? "ACP request failed"));
+        if (message.error) waiter.reject(new ACPRequestError(
+          message.error.message ?? "ACP request failed",
+          typeof message.error.code === "number" ? message.error.code : -32603,
+          message.error.data,
+        ));
         else waiter.resolve(message.result);
       }
     }

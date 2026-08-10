@@ -4,7 +4,13 @@ Generic Pi frontend for stable Agent Client Protocol (ACP) agents.
 
 The extension launches one configured ACP child per Pi runtime, keeps the Pi
 transcript as a presentation mirror, and binds each Pi session to one ACP
-session. It contains no Gnostic discovery or workspace-specific logic.
+session. ACP tool/progress updates stay in a transient panel, permission
+requests use Pi's interactive selector, and remote tools are never registered
+as Pi tools. It contains no Gnostic discovery or workspace-specific logic.
+
+Configured profiles appear as `acp/<profile-id>` models. Use `/acp-status`,
+`/acp-profiles`, `/acp-sessions`, `/acp-new`, and `/acp-use`. The latter two
+create a new Pi session so an existing transcript is never silently rebound.
 
 ## Configuration
 
@@ -39,6 +45,7 @@ never loaded as Pi context.
 ```sh
 npm test
 npm run check
+npm run smoke:loader
 npm run pack:check
 ```
 
