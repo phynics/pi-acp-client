@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -188,7 +189,22 @@ function staticProfiles(): Array<{ id: string; name: string }> {
   try {
     const value = JSON.parse(readFileSync(path, "utf8"));
     if (!Array.isArray(value?.profiles)) return [];
-    return value.profiles
+    const profiles = [...value.profiles];
+    for (const source of Array.isArray(value.sources) ? value.sources : []) {
+      try {
+        const output = execFileSync(source.command, source.args ?? [], {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          maxBuffer: 1024 * 1024,
+          env: { ...process.env, ...(source.env ?? {}) },
+        });
+        const bundle = JSON.parse(output);
+        if (Array.isArray(bundle?.profiles)) profiles.push(...bundle.profiles);
+      } catch {
+        // Profile discovery is refreshed asynchronously during session_start.
+      }
+    }
+    return profiles
       .filter((profile: any) => typeof profile?.id === "string" && typeof profile?.name === "string")
       .map((profile: any) => ({ id: profile.id, name: profile.name }));
   } catch {
