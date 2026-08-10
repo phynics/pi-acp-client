@@ -2,6 +2,18 @@
   "name": "@phynics/pi-acp-client",
   "version": "0.1.0",
   "description": "Generic Pi frontend for Agent Client Protocol agents",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phynics/pi-acp-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/phynics/pi-acp-client/issues"
+  },
+  "homepage": "https://github.com/phynics/pi-acp-client#readme",
+  "engines": {
+    "node": ">=22.18"
+  },
   "type": "module",
   "pi": { "extensions": ["./index.ts"] },
   "files": ["index.ts", "acp.ts", "config.ts", "test/", "README.md", "LICENSE"],
