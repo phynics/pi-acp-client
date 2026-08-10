@@ -46,7 +46,7 @@ export default function piACPClient(pi: ExtensionAPI): void {
           const turnID = `pi:${context.sessionManager?.getSessionId?.() ?? "session"}:${context.sessionManager?.getLeafId?.() ?? `turn-${++turnCounter}`}`;
           const result = await client.prompt(binding.acpSessionID, message, {
             "dev.phynics.pi-acp-client/clientTurnID": turnID,
-          });
+          }, options?.signal);
           const text = liveText || (typeof result?.text === "string" ? result.text : "(empty reply)");
           output.content = [{ type: "text", text }];
           output.stopReason = "stop";

@@ -76,13 +76,26 @@ export class ACPClient {
     this.process = undefined;
   }
 
-  async request(method: string, params?: unknown): Promise<any> {
+  async request(method: string, params?: unknown, signal?: AbortSignal): Promise<any> {
     if (!this.process || this.closed) throw new Error("ACP agent is not running");
     const id = this.nextID++;
     const request = JSON.stringify({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) }) + "\n";
-    this.process.stdin.write(request);
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      if (signal?.aborted) {
+        reject(abortError());
+        return;
+      }
+      const onAbort = () => {
+        this.pending.delete(id);
+        this.write({ jsonrpc: "2.0", method: "$/cancelRequest", params: { id } });
+        reject(abortError());
+      };
+      this.pending.set(id, {
+        resolve: (value) => { signal?.removeEventListener("abort", onAbort); resolve(value); },
+        reject: (error) => { signal?.removeEventListener("abort", onAbort); reject(error); },
+      });
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.process?.stdin.write(request);
     });
   }
 
@@ -103,13 +116,13 @@ export class ACPClient {
     await this.request("session/close", { sessionId });
   }
 
-  async prompt(sessionId: string, text: string, metadata: Record<string, unknown>): Promise<any> {
+  async prompt(sessionId: string, text: string, metadata: Record<string, unknown>, signal?: AbortSignal): Promise<any> {
     return this.request("session/prompt", {
       sessionId,
       prompt: [{ type: "text", text }],
       mcpServers: [],
       _meta: metadata,
-    });
+    }, signal);
   }
 
   private consume(chunk: string): void {
@@ -159,4 +172,10 @@ export class ACPClient {
     for (const waiter of this.pending.values()) waiter.reject(error);
     this.pending.clear();
   }
+}
+
+function abortError(): Error {
+  const error = new Error("The ACP request was aborted");
+  error.name = "AbortError";
+  return error;
 }
