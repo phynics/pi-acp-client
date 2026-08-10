@@ -41,6 +41,7 @@ export default function piACPClient(pi: ExtensionAPI): void {
       stream.push({ type: "start", partial: output });
       void (async () => {
         try {
+          liveText = "";
           if (!client || !binding || !profile) throw new Error("ACP session is not ready");
           const message = latestText(context.messages ?? []);
           const turnID = `pi:${context.sessionManager?.getSessionId?.() ?? "session"}:${context.sessionManager?.getLeafId?.() ?? `turn-${++turnCounter}`}`;
