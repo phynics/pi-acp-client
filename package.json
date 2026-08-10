@@ -1,0 +1,13 @@
+{
+  "name": "@phynics/pi-acp-client",
+  "version": "0.1.0",
+  "description": "Generic Pi frontend for Agent Client Protocol agents",
+  "type": "module",
+  "pi": { "extensions": ["./index.ts"] },
+  "files": ["index.ts", "acp.ts", "config.ts", "test/", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "check": "node --experimental-strip-types --check index.ts && node --experimental-strip-types --check acp.ts && node --experimental-strip-types --check config.ts",
+    "pack:check": "npm pack --dry-run"
+  }
+}
