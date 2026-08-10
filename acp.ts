@@ -126,19 +126,19 @@ export class ACPClient {
       } catch {
         continue;
       }
-      if (typeof message.id === "number") {
+      if (typeof message.method === "string") {
+        this.nextSequence += 1;
+        if (message.method === "session/request_permission" && typeof message.id === "number") {
+          void this.answerPermission(message);
+        } else {
+          this.options.onNotification?.({ method: message.method, params: message.params });
+        }
+      } else if (typeof message.id === "number") {
         const waiter = this.pending.get(message.id);
         if (!waiter) continue;
         this.pending.delete(message.id);
         if (message.error) waiter.reject(new Error(message.error.message ?? "ACP request failed"));
         else waiter.resolve(message.result);
-      } else if (typeof message.method === "string") {
-        this.nextSequence += 1;
-        if (message.method === "session/request_permission") {
-          void this.answerPermission(message);
-        } else {
-          this.options.onNotification?.({ method: message.method, params: message.params });
-        }
       }
     }
   }
