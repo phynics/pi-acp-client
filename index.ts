@@ -99,10 +99,11 @@ export default function piACPClient(pi: ExtensionAPI): void {
       ? ctx.model.id.replace(/^acp\//, "")
       : undefined;
     const selectedEntry = selectedProfileFromEntries(ctx.sessionManager.getEntries());
-    profile = config.profiles.find((candidate) => candidate.id === selectedModel)
-      ?? config.profiles.find((candidate) => candidate.id === selectedEntry)
-      ?? config.profiles.find((candidate) => candidate.id === config.defaultProfile)
-      ?? config.profiles[0];
+    const requestedProfileID = selectedModel ?? selectedEntry ?? config.defaultProfile;
+    profile = requestedProfileID
+      ? config.profiles.find((candidate) => candidate.id === requestedProfileID)
+      : config.profiles[0];
+    if (requestedProfileID && !profile) throw new Error(`unknown ACP profile: ${requestedProfileID}`);
     if (!profile) throw new Error("No ACP profile configured");
     liveText = "";
     client = new ACPClient({
