@@ -54,6 +54,15 @@ export function bindingFromEntries(entries: readonly any[]): ACPBinding | undefi
   return undefined;
 }
 
+export function selectedProfileFromEntries(entries: readonly any[]): string | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type !== "custom" || entry?.customType !== "acp-profile-selection") continue;
+    if (typeof entry.data?.profileID === "string") return entry.data.profileID;
+  }
+  return undefined;
+}
+
 function validateConfig(value: any): asserts value is ACPConfig {
   if (value?.version !== 1 || !Array.isArray(value.profiles)) throw new Error("ACP config must have version 1 and profiles");
   for (const profile of value.profiles) {

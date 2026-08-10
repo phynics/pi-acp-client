@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ACPClient, type ACPProfile } from "./acp.ts";
-import { bindingFromEntries, loadConfig, type ACPBinding } from "./config.ts";
+import { bindingFromEntries, loadConfig, selectedProfileFromEntries, type ACPBinding } from "./config.ts";
 
 type EventStream = AsyncIterable<any> & { push(value: any): void; end(): void };
 
@@ -96,7 +96,9 @@ export default function piACPClient(pi: ExtensionAPI): void {
   pi.on("session_start", async (event: any, ctx: any) => {
     const config = await loadConfig(currentCWD());
     const selectedModel = ctx.model?.provider === "acp" ? ctx.model.id : undefined;
+    const selectedEntry = selectedProfileFromEntries(ctx.sessionManager.getEntries());
     profile = config.profiles.find((candidate) => candidate.id === selectedModel)
+      ?? config.profiles.find((candidate) => candidate.id === selectedEntry)
       ?? config.profiles.find((candidate) => candidate.id === config.defaultProfile)
       ?? config.profiles[0];
     if (!profile) throw new Error("No ACP profile configured");
@@ -157,7 +159,17 @@ export default function piACPClient(pi: ExtensionAPI): void {
   });
   pi.registerCommand("acp-use", {
     description: "Select an ACP profile for a new Pi session",
-    handler: async (args: string, ctx: any) => notify(ctx, `Profile changes require a new Pi session: ${args.trim() || "choose from /acp-profiles"}`, "warning"),
+    handler: async (args: string, ctx: any) => {
+      const requested = args.trim();
+      const config = await loadConfig(currentCWD());
+      const selected = config.profiles.find((candidate) => candidate.id === requested);
+      if (!selected) {
+        notify(ctx, `Unknown ACP profile: ${requested || "(empty)"}`, "error");
+        return;
+      }
+      pi.appendEntry("acp-profile-selection", { profileID: selected.id });
+      notify(ctx, `Selected ${selected.name} for the next Pi session; current ACP binding is unchanged`, "warning");
+    },
   });
 }
 
