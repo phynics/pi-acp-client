@@ -30,7 +30,7 @@ export class ACPClient {
   private frameBuffer = "";
   private closed = false;
   private promptTail: Promise<void> = Promise.resolve();
-  private initializeResult: any;
+  private initializeResult: any = undefined;
 
   constructor(options: ACPClientOptions) {
     this.options = options;
@@ -52,7 +52,10 @@ export class ACPClient {
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => this.consume(chunk));
     child.stderr.on("data", () => { /* stderr is intentionally not ACP data */ });
-    child.on("error", (error) => this.failPending(error instanceof Error ? error : new Error(String(error))));
+    child.on("error", (error) => {
+      this.closed = true;
+      this.failPending(error instanceof Error ? error : new Error(String(error)));
+    });
     child.on("exit", (code, signal) => {
       this.closed = true;
       this.failPending(new Error(`ACP agent exited (${code ?? "signal " + signal})`));

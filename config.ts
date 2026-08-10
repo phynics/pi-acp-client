@@ -25,6 +25,9 @@ export async function loadConfig(cwd = process.cwd()): Promise<ACPConfig> {
   const global = await readJSON(globalPath, { version: 1, profiles: [] });
   validateConfig(global);
   const project = await readJSON(join(cwd, ".pi", "acp.json"), { version: 1 });
+  if (project?.version !== 1 || (project.defaultProfile !== undefined && typeof project.defaultProfile !== "string")) {
+    throw new Error("project ACP config must contain version 1 and an optional defaultProfile string");
+  }
   const profiles = new Map(global.profiles.map((profile) => [profile.id, profile]));
   const sourceProfileIDs = new Set<string>();
   for (const source of global.sources ?? []) {
@@ -36,9 +39,13 @@ export async function loadConfig(cwd = process.cwd()): Promise<ACPConfig> {
       profiles.set(profile.id, profile);
     }
   }
+  const defaultProfile = process.env.PI_ACP_PROFILE ?? project.defaultProfile ?? global.defaultProfile;
+  if (defaultProfile !== undefined && !profiles.has(defaultProfile)) {
+    throw new Error(`unknown ACP profile: ${defaultProfile}`);
+  }
   return {
     version: 1,
-    defaultProfile: process.env.PI_ACP_PROFILE ?? project.defaultProfile ?? global.defaultProfile,
+    defaultProfile,
     profiles: [...profiles.values()],
   };
 }
