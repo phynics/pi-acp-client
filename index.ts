@@ -1,4 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ACPClient, type ACPProfile } from "./acp.ts";
 import { bindingFromEntries, loadConfig, type ACPBinding } from "./config.ts";
 
@@ -15,20 +18,14 @@ export default function piACPClient(pi: ExtensionAPI): void {
   const notify = (ctx: any, message: string, level: "info" | "warning" | "error" = "info") => ctx.ui.notify(`[acp] ${message}`, level);
   const currentCWD = () => process.cwd();
 
-  const models = (() => {
-    try {
-      const path = process.env.PI_ACP_CONFIG;
-      if (!path) return [{ id: "default", name: "ACP Default" }];
-      return [{ id: "default", name: "ACP Default" }];
-    } catch { return [{ id: "default", name: "ACP Default" }]; }
-  })();
+  const models = staticProfiles();
 
   pi.registerProvider("acp", {
     name: "ACP",
     baseUrl: "acp://stdio",
     apiKey: "local",
     api: "acp-v1",
-    models: models.map((model) => ({
+    models: (models.length ? models : [{ id: "default", name: "ACP Default" }]).map((model) => ({
       id: model.id,
       name: model.name,
       reasoning: false,
@@ -96,7 +93,10 @@ export default function piACPClient(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (event: any, ctx: any) => {
     const config = await loadConfig(currentCWD());
-    profile = config.profiles.find((candidate) => candidate.id === config.defaultProfile) ?? config.profiles[0];
+    const selectedModel = ctx.model?.provider === "acp" ? ctx.model.id : undefined;
+    profile = config.profiles.find((candidate) => candidate.id === selectedModel)
+      ?? config.profiles.find((candidate) => candidate.id === config.defaultProfile)
+      ?? config.profiles[0];
     if (!profile) throw new Error("No ACP profile configured");
     liveText = "";
     client = new ACPClient({
@@ -181,4 +181,17 @@ function latestText(messages: any[]): string {
 
 function assistantOutput(model: any): any {
   return { role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id, usage: { input: 0, output: 0 }, stopReason: "pending", timestamp: Date.now() };
+}
+
+function staticProfiles(): Array<{ id: string; name: string }> {
+  const path = process.env.PI_ACP_CONFIG ?? join(homedir(), ".pi", "agent", "acp-profiles.json");
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    if (!Array.isArray(value?.profiles)) return [];
+    return value.profiles
+      .filter((profile: any) => typeof profile?.id === "string" && typeof profile?.name === "string")
+      .map((profile: any) => ({ id: profile.id, name: profile.name }));
+  } catch {
+    return [];
+  }
 }
