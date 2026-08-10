@@ -26,10 +26,11 @@ export class ACPClient {
   private readonly options: ACPClientOptions;
   private process?: ChildProcessWithoutNullStreams;
   private nextID = 1;
-  private nextSequence = 0;
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   private frameBuffer = "";
   private closed = false;
+  private promptTail: Promise<void> = Promise.resolve();
+  private initializeResult: any;
 
   constructor(options: ACPClientOptions) {
     this.options = options;
@@ -56,11 +57,15 @@ export class ACPClient {
       this.closed = true;
       this.failPending(new Error(`ACP agent exited (${code ?? "signal " + signal})`));
     });
-    await this.request("initialize", {
+    this.initializeResult = await this.request("initialize", {
       protocolVersion: 1,
       clientCapabilities: {},
       clientInfo: { name: "pi-acp-client", version: "0.1.0" },
     });
+  }
+
+  get supportsSessionList(): boolean {
+    return Boolean(this.initializeResult?.agentCapabilities?.sessionCapabilities?.list);
   }
 
   async shutdown(): Promise<void> {
@@ -108,6 +113,7 @@ export class ACPClient {
   }
 
   async list(cwd?: string): Promise<any[]> {
+    if (!this.supportsSessionList) throw new Error("ACP agent does not advertise session/list");
     const result = await this.request("session/list", cwd ? { cwd } : {});
     return Array.isArray(result?.sessions) ? result.sessions : [];
   }
@@ -117,12 +123,20 @@ export class ACPClient {
   }
 
   async prompt(sessionId: string, text: string, metadata: Record<string, unknown>, signal?: AbortSignal): Promise<any> {
-    return this.request("session/prompt", {
-      sessionId,
-      prompt: [{ type: "text", text }],
-      mcpServers: [],
-      _meta: metadata,
-    }, signal);
+    let release!: () => void;
+    const previous = this.promptTail;
+    this.promptTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await this.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text }],
+        mcpServers: [],
+        _meta: metadata,
+      }, signal);
+    } finally {
+      release();
+    }
   }
 
   private consume(chunk: string): void {
@@ -137,10 +151,12 @@ export class ACPClient {
       try {
         message = JSON.parse(line);
       } catch {
-        continue;
+        this.closed = true;
+        this.failPending(new Error("ACP agent emitted malformed JSON"));
+        this.process?.kill();
+        return;
       }
       if (typeof message.method === "string") {
-        this.nextSequence += 1;
         if (message.method === "session/request_permission" && typeof message.id === "number") {
           void this.answerPermission(message);
         } else {
@@ -157,9 +173,14 @@ export class ACPClient {
   }
 
   private async answerPermission(message: any): Promise<void> {
-    const outcome = this.options.onPermission
-      ? await this.options.onPermission(message.params)
-      : { outcome: { outcome: "cancelled" } };
+    let outcome: any;
+    try {
+      outcome = this.options.onPermission
+        ? await this.options.onPermission(message.params)
+        : { outcome: { outcome: "cancelled" } };
+    } catch {
+      outcome = { outcome: { outcome: "cancelled" } };
+    }
     this.write({ jsonrpc: "2.0", id: message.id, result: outcome });
   }
 

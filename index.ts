@@ -26,9 +26,9 @@ export default function piACPClient(pi: ExtensionAPI): void {
     baseUrl: "acp://stdio",
     apiKey: "local",
     api: "acp-v1",
-    models: (models.length ? models : [{ id: "default", name: "ACP Default" }]).map((model) => ({
-      id: model.id,
-      name: model.name,
+    models: models.map((model) => ({
+      id: `acp/${model.id}`,
+      name: `ACP: ${model.name}`,
       reasoning: false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -95,7 +95,9 @@ export default function piACPClient(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (event: any, ctx: any) => {
     const config = await loadConfig(currentCWD());
-    const selectedModel = ctx.model?.provider === "acp" ? ctx.model.id : undefined;
+    const selectedModel = ctx.model?.provider === "acp" && typeof ctx.model.id === "string"
+      ? ctx.model.id.replace(/^acp\//, "")
+      : undefined;
     const selectedEntry = selectedProfileFromEntries(ctx.sessionManager.getEntries());
     profile = config.profiles.find((candidate) => candidate.id === selectedModel)
       ?? config.profiles.find((candidate) => candidate.id === selectedEntry)
@@ -113,7 +115,10 @@ export default function piACPClient(pi: ExtensionAPI): void {
     });
     await client.start();
     const saved = bindingFromEntries(ctx.sessionManager.getEntries());
-    if (event.reason !== "new" && saved && saved.profileID === profile.id && saved.canonicalCWD === currentCWD()) {
+    if (event.reason !== "new") {
+      if (!saved) throw new Error("ACP resume is missing its persisted session binding");
+      if (saved.profileID !== profile.id) throw new Error("ACP profile changed; start a new Pi session with /acp-use");
+      if (saved.canonicalCWD !== currentCWD()) throw new Error("ACP working directory changed; start a new Pi session");
       binding = saved;
       await client.resume(saved.acpSessionID, saved.canonicalCWD);
     } else {
