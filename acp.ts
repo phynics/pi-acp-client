@@ -107,7 +107,7 @@ export class ACPClient {
       }
       const onAbort = () => {
         this.pending.delete(id);
-        this.write({ jsonrpc: "2.0", method: "$/cancelRequest", params: { id } });
+        this.write({ jsonrpc: "2.0", method: "$/cancel_request", params: { id } });
         reject(abortError());
       };
       this.pending.set(id, {
@@ -143,12 +143,25 @@ export class ACPClient {
     this.promptTail = new Promise<void>((resolve) => { release = resolve; });
     await previous;
     try {
-      return await this.request("session/prompt", {
+      if (signal?.aborted) throw abortError();
+      const cancel = () => this.write({
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId },
+      });
+      signal?.addEventListener("abort", cancel, { once: true });
+      try {
+        const result = await this.request("session/prompt", {
         sessionId,
         prompt: [{ type: "text", text }],
         mcpServers: [],
         _meta: metadata,
-      }, signal);
+        });
+        if (result?.stopReason === "cancelled") throw abortError();
+        return result;
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+      }
     } finally {
       release();
     }
