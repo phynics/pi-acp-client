@@ -11,6 +11,10 @@
     "url": "https://github.com/phynics/pi-acp-client/issues"
   },
   "homepage": "https://github.com/phynics/pi-acp-client#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=22.18"
   },

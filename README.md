@@ -12,6 +12,20 @@ Configured profiles appear as `acp/<profile-id>` models. Use `/acp-status`,
 `/acp-profiles`, `/acp-sessions`, `/acp-new`, and `/acp-use`. The latter two
 create a new Pi session so an existing transcript is never silently rebound.
 
+## Installation
+
+After the first release is published:
+
+```sh
+pi install npm:@phynics/pi-acp-client
+```
+
+Until then, install the current repository version:
+
+```sh
+pi install git:github.com/phynics/pi-acp-client
+```
+
 ## Configuration
 
 Create `~/.pi/agent/acp-profiles.json`:
