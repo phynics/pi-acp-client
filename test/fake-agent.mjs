@@ -23,7 +23,6 @@ for await (const line of input) {
     reply(request, { sessions: [{ sessionId: "fake-session", cwd: request.params?.cwd ?? process.cwd() }] });
   } else if (request.method === "session/prompt") {
     pendingPrompt = request;
-    if (request.params?.prompt?.[0]?.text === "cancel me") continue;
     process.stdout.write(JSON.stringify({
       jsonrpc: "2.0",
       id: "permission-1",
@@ -38,6 +37,8 @@ for await (const line of input) {
       },
     }) + "\n");
   } else if (request.id === "permission-1" && pendingPrompt) {
+    if (pendingPrompt.params?.prompt?.[0]?.text === "cancel me"
+        && request.result?.outcome?.outcome === "cancelled") continue;
     process.stdout.write(JSON.stringify({
       jsonrpc: "2.0",
       method: "session/update",

@@ -44,6 +44,7 @@ test("cancels prompt turns with the stable session/cancel notification", async (
       env: { PI_ACP_FAKE_TRACE: trace },
     },
     cwd: join(fixture, ".."),
+    onPermission: async () => new Promise(() => {}),
   });
   await client.start();
   const session = await client.newSession(process.cwd());
@@ -53,5 +54,9 @@ test("cancels prompt turns with the stable session/cancel notification", async (
   await assert.rejects(prompt, { name: "AbortError" });
   const frames = await readFile(trace, "utf8");
   await client.shutdown();
-  assert.match(frames, /"method":"session\/cancel"/);
+  const messages = frames.trim().split("\n").map((line) => JSON.parse(line));
+  const permissionIndex = messages.findIndex((message) => message.id === "permission-1" && message.result?.outcome?.outcome === "cancelled");
+  const cancelIndex = messages.findIndex((message) => message.method === "session/cancel");
+  assert.ok(permissionIndex >= 0, "pending permission must receive a cancelled outcome");
+  assert.ok(cancelIndex > permissionIndex, "permission cancellation must precede session/cancel");
 });

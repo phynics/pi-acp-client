@@ -43,6 +43,8 @@ export class ACPClient {
   private closed = false;
   private promptTail: Promise<void> = Promise.resolve();
   private initializeResult: any = undefined;
+  private pendingPermissions = new Map<string | number, { sessionId: string }>();
+  private cancelledSessions = new Set<string>();
 
   constructor(options: ACPClientOptions) {
     this.options = options;
@@ -144,11 +146,15 @@ export class ACPClient {
     await previous;
     try {
       if (signal?.aborted) throw abortError();
-      const cancel = () => this.write({
-        jsonrpc: "2.0",
-        method: "session/cancel",
-        params: { sessionId },
-      });
+      const cancel = () => {
+        this.cancelledSessions.add(sessionId);
+        this.cancelPermissions(sessionId);
+        this.write({
+          jsonrpc: "2.0",
+          method: "session/cancel",
+          params: { sessionId },
+        });
+      };
       signal?.addEventListener("abort", cancel, { once: true });
       try {
         const result = await this.request("session/prompt", {
@@ -161,6 +167,7 @@ export class ACPClient {
         return result;
       } finally {
         signal?.removeEventListener("abort", cancel);
+        this.cancelledSessions.delete(sessionId);
       }
     } finally {
       release();
@@ -205,15 +212,31 @@ export class ACPClient {
   }
 
   private async answerPermission(message: any): Promise<void> {
+    const key = message.id as string | number;
+    const sessionId = typeof message.params?.sessionId === "string" ? message.params.sessionId : "";
+    if (this.cancelledSessions.has(sessionId)) {
+      this.write({ jsonrpc: "2.0", id: key, result: cancelledPermission() });
+      return;
+    }
+    this.pendingPermissions.set(key, { sessionId });
     let outcome: any;
     try {
       outcome = this.options.onPermission
         ? await this.options.onPermission(message.params)
         : { outcome: { outcome: "cancelled" } };
     } catch {
-      outcome = { outcome: { outcome: "cancelled" } };
+      outcome = cancelledPermission();
     }
-    this.write({ jsonrpc: "2.0", id: message.id, result: outcome });
+    if (!this.pendingPermissions.delete(key)) return;
+    this.write({ jsonrpc: "2.0", id: key, result: outcome });
+  }
+
+  private cancelPermissions(sessionId: string): void {
+    for (const [id, pending] of this.pendingPermissions) {
+      if (pending.sessionId !== sessionId) continue;
+      this.pendingPermissions.delete(id);
+      this.write({ jsonrpc: "2.0", id, result: cancelledPermission() });
+    }
   }
 
   private write(message: unknown): void {
@@ -231,4 +254,8 @@ function abortError(): Error {
   const error = new Error("The ACP request was aborted");
   error.name = "AbortError";
   return error;
+}
+
+function cancelledPermission(): any {
+  return { outcome: { outcome: "cancelled" } };
 }
