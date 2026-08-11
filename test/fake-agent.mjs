@@ -1,4 +1,5 @@
 import readline from "node:readline";
+import { appendFileSync } from "node:fs";
 
 const input = readline.createInterface({ input: process.stdin });
 const keepAlive = setInterval(() => {}, 1_000);
@@ -6,6 +7,9 @@ let pendingPrompt;
 for await (const line of input) {
   if (!line.trim()) continue;
   const request = JSON.parse(line);
+  if (process.env.PI_ACP_FAKE_TRACE) {
+    appendFileSync(process.env.PI_ACP_FAKE_TRACE, JSON.stringify(request) + "\n");
+  }
   if (request.method === "initialize") {
     reply(request, {
       protocolVersion: 1,
@@ -33,6 +37,8 @@ for await (const line of input) {
       },
     }) + "\n");
   } else if (request.id === "permission-1" && pendingPrompt) {
+    if (pendingPrompt.params?.prompt?.[0]?.text === "cancel me"
+        && request.result?.outcome?.outcome === "cancelled") continue;
     process.stdout.write(JSON.stringify({
       jsonrpc: "2.0",
       method: "session/update",
@@ -50,6 +56,9 @@ for await (const line of input) {
       },
     }) + "\n");
     reply(pendingPrompt, { stopReason: "end_turn", text: "fake reply" });
+    pendingPrompt = undefined;
+  } else if (request.method === "session/cancel" && pendingPrompt) {
+    reply(pendingPrompt, { stopReason: "cancelled" });
     pendingPrompt = undefined;
   } else if (request.method === "shutdown") {
     reply(request, {});
