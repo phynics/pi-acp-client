@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ACPProfile } from "./acp.ts";
 
 export type ACPConfig = {
@@ -21,6 +22,7 @@ export type ACPBinding = {
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 
 export async function loadConfig(cwd = process.cwd()): Promise<ACPConfig> {
+  cwd = canonicalCWD(cwd);
   const globalPath = process.env.PI_ACP_CONFIG ?? join(homedir(), ".pi", "agent", "acp-profiles.json");
   const global = await readJSON(globalPath, { version: 1, profiles: [] });
   validateConfig(global);
@@ -48,6 +50,10 @@ export async function loadConfig(cwd = process.cwd()): Promise<ACPConfig> {
     defaultProfile,
     profiles: [...profiles.values()],
   };
+}
+
+export function canonicalCWD(cwd = process.cwd()): string {
+  return realpathSync.native(resolve(cwd));
 }
 
 export function bindingFromEntries(entries: readonly any[]): ACPBinding | undefined {

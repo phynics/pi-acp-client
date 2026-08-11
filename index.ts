@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ACPClient, type ACPProfile } from "./acp.ts";
-import { bindingFromEntries, loadConfig, selectedProfileFromEntries, type ACPBinding } from "./config.ts";
+import { bindingFromEntries, canonicalCWD, loadConfig, selectedProfileFromEntries, type ACPBinding } from "./config.ts";
 
 type EventStream = AsyncIterableIterator<any> & { push(value: any): void; end(): void };
 
@@ -22,7 +22,7 @@ export default function piACPClient(pi: ExtensionAPI): void {
   let activeUI: any;
 
   const notify = (ctx: any, message: string, level: "info" | "warning" | "error" = "info") => ctx.ui.notify(`[acp] ${message}`, level);
-  const currentCWD = () => process.cwd();
+  const currentCWD = () => canonicalCWD();
   const renderPanel = () => activeUI?.setWidget(
     "pi-acp-client-live",
     livePanel.length ? livePanel.slice(-12) : undefined,
