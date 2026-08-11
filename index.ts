@@ -14,7 +14,7 @@ export default function piACPClient(pi: ExtensionAPI): void {
   let binding: ACPBinding | undefined;
   let providerActive = false;
   let toolsBeforeACP: string[] | undefined;
-  let turnCounter = 0;
+  let activeSessionManager: any;
   let liveText = "";
   let activeTextDelta: ((text: string) => void) | undefined;
   let providerTail: Promise<void> = Promise.resolve();
@@ -88,7 +88,12 @@ export default function piACPClient(pi: ExtensionAPI): void {
             stream.push({ type: "text_delta", contentIndex: 0, delta, partial: output });
           };
           const message = latestText(context.messages ?? []);
-          const turnID = `pi:${context.sessionManager?.getSessionId?.() ?? "session"}:${context.sessionManager?.getLeafId?.() ?? `turn-${++turnCounter}`}`;
+          const piSessionID = activeSessionManager?.getSessionId?.();
+          const userEntryID = activeSessionManager?.getLeafId?.();
+          if (typeof piSessionID !== "string" || !piSessionID || typeof userEntryID !== "string" || !userEntryID) {
+            throw new Error("Pi session identity is unavailable; cannot derive a stable ACP turn ID");
+          }
+          const turnID = `pi:${piSessionID}:${userEntryID}`;
           const result = await client.prompt(binding.acpSessionID, message, {
             "dev.phynics.pi-acp-client/clientTurnID": turnID,
           }, options?.signal);
@@ -135,6 +140,7 @@ export default function piACPClient(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (event: any, ctx: any) => {
     activeUI = ctx.ui;
+    activeSessionManager = ctx.sessionManager;
     const config = await loadConfig(currentCWD());
     const selectedModel = ctx.model?.provider === "acp" && typeof ctx.model.id === "string"
       ? ctx.model.id.replace(/^acp\//, "")
@@ -207,6 +213,7 @@ export default function piACPClient(pi: ExtensionAPI): void {
     profile = undefined;
     binding = undefined;
     activeUI = undefined;
+    activeSessionManager = undefined;
   });
 
   pi.registerCommand("acp-status", {
@@ -310,7 +317,10 @@ function staticProfiles(): Array<{ id: string; name: string }> {
   try {
     const value = JSON.parse(readFileSync(path, "utf8"));
     if (!Array.isArray(value?.profiles)) return [];
-    const profiles = [...value.profiles];
+    const profiles = new Map<string, any>();
+    for (const profile of value.profiles) {
+      if (typeof profile?.id === "string") profiles.set(profile.id, profile);
+    }
     for (const source of Array.isArray(value.sources) ? value.sources : []) {
       try {
         const output = execFileSync(source.command, source.args ?? [], {
@@ -320,12 +330,16 @@ function staticProfiles(): Array<{ id: string; name: string }> {
           env: { ...process.env, ...(source.env ?? {}) },
         });
         const bundle = JSON.parse(output);
-        if (Array.isArray(bundle?.profiles)) profiles.push(...bundle.profiles);
+        if (Array.isArray(bundle?.profiles)) {
+          for (const profile of bundle.profiles) {
+            if (typeof profile?.id === "string") profiles.set(profile.id, profile);
+          }
+        }
       } catch {
         // Profile discovery is refreshed asynchronously during session_start.
       }
     }
-    return profiles
+    return [...profiles.values()]
       .filter((profile: any) => typeof profile?.id === "string" && typeof profile?.name === "string")
       .map((profile: any) => ({ id: profile.id, name: profile.name }));
   } catch {

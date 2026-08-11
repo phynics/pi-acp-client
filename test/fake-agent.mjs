@@ -1,4 +1,5 @@
 import readline from "node:readline";
+import { appendFileSync } from "node:fs";
 
 const input = readline.createInterface({ input: process.stdin });
 const keepAlive = setInterval(() => {}, 1_000);
@@ -6,6 +7,9 @@ let pendingPrompt;
 for await (const line of input) {
   if (!line.trim()) continue;
   const request = JSON.parse(line);
+  if (process.env.PI_ACP_FAKE_TRACE) {
+    appendFileSync(process.env.PI_ACP_FAKE_TRACE, JSON.stringify(request) + "\n");
+  }
   if (request.method === "initialize") {
     reply(request, {
       protocolVersion: 1,

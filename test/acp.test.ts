@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ACPClient } from "../acp.ts";
 
-test("runs the generic ACP lifecycle against a fake agent", { skip: !process.env.PI_ACP_RUN_SUBPROCESS_TESTS }, async () => {
+test("runs the generic ACP lifecycle against a fake agent", async () => {
   const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
   const updates: any[] = [];
   const client = new ACPClient({
