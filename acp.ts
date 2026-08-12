@@ -74,15 +74,34 @@ export class ACPClient {
       this.closed = true;
       this.failPending(new Error(`ACP agent exited (${code ?? "signal " + signal})`));
     });
-    this.initializeResult = await this.request("initialize", {
-      protocolVersion: 1,
-      clientCapabilities: {},
-      clientInfo: { name: "pi-acp-client", version: "0.1.0" },
-    });
+    try {
+      this.initializeResult = await this.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+        clientInfo: { name: "pi-acp-client", version: "0.1.0" },
+      });
+      if (this.initializeResult?.protocolVersion !== 1) {
+        throw new Error(`ACP agent negotiated unsupported protocol version: ${String(this.initializeResult?.protocolVersion)}`);
+      }
+    } catch (error) {
+      this.closed = true;
+      child.stdin.end();
+      child.kill();
+      this.process = undefined;
+      throw error;
+    }
   }
 
   get supportsSessionList(): boolean {
-    return Boolean(this.initializeResult?.agentCapabilities?.sessionCapabilities?.list);
+    return isAdvertised(this.initializeResult?.agentCapabilities?.sessionCapabilities?.list);
+  }
+
+  get supportsSessionResume(): boolean {
+    return isAdvertised(this.initializeResult?.agentCapabilities?.sessionCapabilities?.resume);
+  }
+
+  get supportsSessionClose(): boolean {
+    return isAdvertised(this.initializeResult?.agentCapabilities?.sessionCapabilities?.close);
   }
 
   async shutdown(): Promise<void> {
@@ -126,6 +145,7 @@ export class ACPClient {
   }
 
   async resume(sessionId: string, cwd: string): Promise<void> {
+    if (!this.supportsSessionResume) throw new Error("ACP agent does not advertise session/resume");
     await this.request("session/resume", { sessionId, cwd, mcpServers: [] });
   }
 
@@ -136,6 +156,7 @@ export class ACPClient {
   }
 
   async closeSession(sessionId: string): Promise<void> {
+    if (!this.supportsSessionClose) throw new Error("ACP agent does not advertise session/close");
     await this.request("session/close", { sessionId });
   }
 
@@ -258,6 +279,10 @@ function abortError(): Error {
 
 function cancelledPermission(): any {
   return { outcome: { outcome: "cancelled" } };
+}
+
+function isAdvertised(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== false;
 }
 
 function isResponseID(value: unknown): value is string | number {
