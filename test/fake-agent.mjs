@@ -4,6 +4,7 @@ import { appendFileSync } from "node:fs";
 const input = readline.createInterface({ input: process.stdin });
 const keepAlive = setInterval(() => {}, 1_000);
 let pendingPrompt;
+let authenticated = false;
 for await (const line of input) {
   if (!line.trim()) continue;
   const request = JSON.parse(line);
@@ -11,12 +12,29 @@ for await (const line of input) {
     appendFileSync(process.env.PI_ACP_FAKE_TRACE, JSON.stringify(request) + "\n");
   }
   if (request.method === "initialize") {
+    const authentication = process.env.PI_ACP_FAKE_AUTH ? {
+      authMethods: [{ id: "fake-login", name: "Fake login" }],
+    } : {};
     reply(request, {
       protocolVersion: 1,
       agentCapabilities: { sessionCapabilities: { list: {} } },
+      ...authentication,
     });
+  } else if (request.method === "authenticate") {
+    if (!process.env.PI_ACP_FAKE_AUTH || request.params?.methodId !== "fake-login") {
+      replyError(request, -32602, "unsupported authentication method");
+    } else if (process.env.PI_ACP_FAKE_AUTH_FAILURE) {
+      replyError(request, -32000, "authentication failed");
+    } else {
+      authenticated = true;
+      reply(request, {});
+    }
   } else if (request.method === "session/new") {
-    reply(request, { sessionId: "fake-session" });
+    if (process.env.PI_ACP_FAKE_AUTH && !authenticated) {
+      replyError(request, -32000, "authentication required");
+    } else {
+      reply(request, { sessionId: "fake-session" });
+    }
   } else if (request.method === "session/resume" || request.method === "session/close") {
     reply(request, {});
   } else if (request.method === "session/list") {
@@ -68,4 +86,8 @@ for await (const line of input) {
 
 function reply(request, result) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\n");
+}
+
+function replyError(request, code, message) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code, message } }) + "\n");
 }
