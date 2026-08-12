@@ -13,11 +13,20 @@ export type ACPNotification = {
   params?: any;
 };
 
+export type ACPAuthMethod = {
+  id: string;
+  name?: string;
+  description?: string;
+  type?: string;
+  [key: string]: unknown;
+};
+
 export type ACPClientOptions = {
   profile: ACPProfile;
   cwd: string;
   onNotification?: (notification: ACPNotification) => void;
   onPermission?: (params: any) => Promise<any>;
+  onAuthenticate?: (methods: ACPAuthMethod[]) => Promise<string | undefined>;
 };
 
 export class ACPRequestError extends Error {
@@ -83,6 +92,10 @@ export class ACPClient {
       if (this.initializeResult?.protocolVersion !== 1) {
         throw new Error(`ACP agent negotiated unsupported protocol version: ${String(this.initializeResult?.protocolVersion)}`);
       }
+      if (this.options.onAuthenticate && this.authMethods.length) {
+        const methodID = await this.options.onAuthenticate(this.authMethods);
+        if (methodID !== undefined) await this.authenticate(methodID);
+      }
     } catch (error) {
       this.closed = true;
       child.stdin.end();
@@ -102,6 +115,12 @@ export class ACPClient {
 
   get supportsSessionClose(): boolean {
     return isAdvertised(this.initializeResult?.agentCapabilities?.sessionCapabilities?.close);
+  }
+
+  get authMethods(): ACPAuthMethod[] {
+    return Array.isArray(this.initializeResult?.authMethods)
+      ? this.initializeResult.authMethods.filter((method: any) => typeof method?.id === "string")
+      : [];
   }
 
   async shutdown(): Promise<void> {
@@ -158,6 +177,13 @@ export class ACPClient {
   async closeSession(sessionId: string): Promise<void> {
     if (!this.supportsSessionClose) throw new Error("ACP agent does not advertise session/close");
     await this.request("session/close", { sessionId });
+  }
+
+  async authenticate(methodID: string): Promise<void> {
+    if (!this.authMethods.some((method) => method.id === methodID)) {
+      throw new Error(`ACP authentication method was not advertised: ${methodID}`);
+    }
+    await this.request("authenticate", { methodId: methodID });
   }
 
   async prompt(sessionId: string, text: string, metadata: Record<string, unknown>, signal?: AbortSignal): Promise<any> {

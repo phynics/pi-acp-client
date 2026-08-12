@@ -187,6 +187,12 @@ export default function piACPClient(pi: ExtensionAPI): void {
         appendPanel(`Permission: ${choice}`);
         return { outcome: { outcome: "selected", optionId: options[index].optionId } };
       },
+      onAuthenticate: async (methods) => {
+        const labels = methods.map((method) => method.name ?? method.id);
+        const choice = await ctx.ui.select("ACP authentication method", labels);
+        const index = choice === undefined ? -1 : labels.indexOf(choice);
+        return index < 0 ? undefined : methods[index].id;
+      },
     });
     await client.start();
     const saved = bindingFromEntries(ctx.sessionManager.getEntries());

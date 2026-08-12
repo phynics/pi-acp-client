@@ -137,3 +137,60 @@ test("correlates string JSON-RPC response IDs", async () => {
   transport.consume(JSON.stringify({ jsonrpc: "2.0", id: "string-request", result: { ok: true } }) + "\n");
   assert.deepEqual(await result, { ok: true });
 });
+
+test("authenticates with an advertised method before creating a session", async () => {
+  const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
+  const client = new ACPClient({
+    profile: {
+      id: "fake",
+      name: "Fake",
+      command: process.execPath,
+      args: [fixture],
+      env: { PI_ACP_FAKE_AUTH: "1" },
+    },
+    cwd: join(fixture, ".."),
+    onAuthenticate: async (methods) => {
+      assert.equal(methods[0]?.id, "fake-login");
+      return "fake-login";
+    },
+  });
+  await client.start();
+  assert.equal(client.authMethods[0]?.id, "fake-login");
+  assert.equal((await client.newSession(process.cwd())).sessionId, "fake-session");
+  await client.shutdown();
+});
+
+test("rejects authentication methods that were not advertised", async () => {
+  const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
+  const client = new ACPClient({
+    profile: {
+      id: "fake",
+      name: "Fake",
+      command: process.execPath,
+      args: [fixture],
+      env: { PI_ACP_FAKE_AUTH: "1" },
+    },
+    cwd: join(fixture, ".."),
+  });
+  await client.start();
+  await assert.rejects(client.authenticate("missing"), /was not advertised/);
+  await assert.rejects(client.newSession(process.cwd()), /authentication required/);
+  await client.shutdown();
+});
+
+test("surfaces agent authentication failures", async () => {
+  const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
+  const client = new ACPClient({
+    profile: {
+      id: "fake",
+      name: "Fake",
+      command: process.execPath,
+      args: [fixture],
+      env: { PI_ACP_FAKE_AUTH: "1", PI_ACP_FAKE_AUTH_FAILURE: "1" },
+    },
+    cwd: join(fixture, ".."),
+    onAuthenticate: async () => "fake-login",
+  });
+  await assert.rejects(client.start(), /authentication failed/);
+  await client.shutdown();
+});
