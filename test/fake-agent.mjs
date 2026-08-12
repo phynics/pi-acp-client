@@ -15,9 +15,12 @@ for await (const line of input) {
     const authentication = process.env.PI_ACP_FAKE_AUTH ? {
       authMethods: [{ id: "fake-login", name: "Fake login" }],
     } : {};
+    const sessionCapabilities = process.env.PI_ACP_FAKE_NO_OPTIONAL_SESSION_CAPS
+      ? { list: {} }
+      : { list: {}, resume: {}, close: {} };
     reply(request, {
-      protocolVersion: 1,
-      agentCapabilities: { sessionCapabilities: { list: {} } },
+      protocolVersion: Number(process.env.PI_ACP_FAKE_PROTOCOL_VERSION ?? "1"),
+      agentCapabilities: { sessionCapabilities },
       ...authentication,
     });
   } else if (request.method === "authenticate") {
@@ -54,6 +57,8 @@ for await (const line of input) {
         ],
       },
     }) + "\n");
+  } else if (request.method === "wait") {
+    // Intentionally left pending so the client-side request cancellation path can be tested.
   } else if (request.id === "permission-1" && pendingPrompt) {
     if (pendingPrompt.params?.prompt?.[0]?.text === "cancel me"
         && request.result?.outcome?.outcome === "cancelled") continue;
