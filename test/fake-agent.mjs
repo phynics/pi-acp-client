@@ -44,6 +44,11 @@ for await (const line of input) {
     reply(request, { sessions: [{ sessionId: "fake-session", cwd: request.params?.cwd ?? process.cwd() }] });
   } else if (request.method === "session/prompt") {
     pendingPrompt = request;
+    if (process.env.PI_ACP_FAKE_AUTO_REPLY) {
+      reply(request, { stopReason: "end_turn", prompt: request.params?.prompt });
+      pendingPrompt = undefined;
+      continue;
+    }
     process.stdout.write(JSON.stringify({
       jsonrpc: "2.0",
       id: "permission-1",

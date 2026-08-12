@@ -4,22 +4,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ACPClient } from "../acp.ts";
+import { ACPClient, type ACPPromptContent } from "../acp.ts";
 
 test("runs the generic ACP lifecycle against a fake agent", async () => {
   const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
   const updates: any[] = [];
   const client = new ACPClient({
-    profile: {
-      id: "fake",
-      name: "Fake",
-      command: process.execPath,
-      args: [fixture],
-    },
+    profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture] },
     cwd: join(fixture, ".."),
     onNotification: (notification) => updates.push(notification),
   });
-
   await client.start();
   assert.equal(client.supportsSessionList, true);
   const session = await client.newSession(process.cwd());
@@ -36,13 +30,7 @@ test("cancels prompt turns with the stable session/cancel notification", async (
   const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
   const trace = join(await mkdtemp(join(tmpdir(), "pi-acp-cancel-")), "trace.jsonl");
   const client = new ACPClient({
-    profile: {
-      id: "fake",
-      name: "Fake",
-      command: process.execPath,
-      args: [fixture],
-      env: { PI_ACP_FAKE_TRACE: trace },
-    },
+    profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture], env: { PI_ACP_FAKE_TRACE: trace } },
     cwd: join(fixture, ".."),
     onPermission: async () => new Promise(() => {}),
   });
@@ -64,13 +52,7 @@ test("cancels prompt turns with the stable session/cancel notification", async (
 test("rejects an unsupported negotiated protocol version", async () => {
   const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
   const client = new ACPClient({
-    profile: {
-      id: "fake",
-      name: "Fake",
-      command: process.execPath,
-      args: [fixture],
-      env: { PI_ACP_FAKE_PROTOCOL_VERSION: "2" },
-    },
+    profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture], env: { PI_ACP_FAKE_PROTOCOL_VERSION: "2" } },
     cwd: join(fixture, ".."),
   });
   await assert.rejects(client.start(), /unsupported protocol version/);
@@ -80,13 +62,7 @@ test("rejects an unsupported negotiated protocol version", async () => {
 test("does not call unadvertised optional session methods", async () => {
   const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
   const client = new ACPClient({
-    profile: {
-      id: "fake",
-      name: "Fake",
-      command: process.execPath,
-      args: [fixture],
-      env: { PI_ACP_FAKE_NO_OPTIONAL_SESSION_CAPS: "1" },
-    },
+    profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture], env: { PI_ACP_FAKE_NO_OPTIONAL_SESSION_CAPS: "1" } },
     cwd: join(fixture, ".."),
   });
   await client.start();
@@ -101,13 +77,7 @@ test("uses requestId for JSON-RPC request cancellation", async () => {
   const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
   const trace = join(await mkdtemp(join(tmpdir(), "pi-acp-request-cancel-")), "trace.jsonl");
   const client = new ACPClient({
-    profile: {
-      id: "fake",
-      name: "Fake",
-      command: process.execPath,
-      args: [fixture],
-      env: { PI_ACP_FAKE_TRACE: trace },
-    },
+    profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture], env: { PI_ACP_FAKE_TRACE: trace } },
     cwd: join(fixture, ".."),
   });
   await client.start();
@@ -126,33 +96,45 @@ test("uses requestId for JSON-RPC request cancellation", async () => {
 });
 
 test("correlates string JSON-RPC response IDs", async () => {
-  const client = new ACPClient({
-    profile: { id: "fake", name: "Fake", command: process.execPath },
-    cwd: process.cwd(),
-  });
+  const client = new ACPClient({ profile: { id: "fake", name: "Fake", command: process.execPath }, cwd: process.cwd() });
   const transport = client as any;
-  const result = new Promise((resolve, reject) => {
-    transport.pending.set("string-request", { resolve, reject });
-  });
+  const result = new Promise((resolve, reject) => { transport.pending.set("string-request", { resolve, reject }); });
   transport.consume(JSON.stringify({ jsonrpc: "2.0", id: "string-request", result: { ok: true } }) + "\n");
   assert.deepEqual(await result, { ok: true });
+});
+
+test("forwards text and resource-link prompt content", async () => {
+  const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
+  const client = new ACPClient({
+    profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture], env: { PI_ACP_FAKE_AUTO_REPLY: "1" } },
+    cwd: join(fixture, ".."),
+  });
+  await client.start();
+  const session = await client.newSession(process.cwd());
+  const prompt: ACPPromptContent[] = [
+    { type: "text", text: "Open this file: " },
+    { type: "resource_link", uri: "file:///tmp/example.txt", name: "example.txt" },
+  ];
+  const result = await client.prompt(session.sessionId, prompt, {});
+  assert.deepEqual(result.prompt, prompt);
+  await client.shutdown();
+});
+
+test("rejects unsupported prompt content blocks", async () => {
+  const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
+  const client = new ACPClient({ profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture] }, cwd: join(fixture, "..") });
+  await client.start();
+  const session = await client.newSession(process.cwd());
+  await assert.rejects(client.prompt(session.sessionId, [{ type: "image" } as any], {}), /unsupported type: image/);
+  await client.shutdown();
 });
 
 test("authenticates with an advertised method before creating a session", async () => {
   const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
   const client = new ACPClient({
-    profile: {
-      id: "fake",
-      name: "Fake",
-      command: process.execPath,
-      args: [fixture],
-      env: { PI_ACP_FAKE_AUTH: "1" },
-    },
+    profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture], env: { PI_ACP_FAKE_AUTH: "1" } },
     cwd: join(fixture, ".."),
-    onAuthenticate: async (methods) => {
-      assert.equal(methods[0]?.id, "fake-login");
-      return "fake-login";
-    },
+    onAuthenticate: async (methods) => { assert.equal(methods[0]?.id, "fake-login"); return "fake-login"; },
   });
   await client.start();
   assert.equal(client.authMethods[0]?.id, "fake-login");
@@ -162,16 +144,7 @@ test("authenticates with an advertised method before creating a session", async 
 
 test("rejects authentication methods that were not advertised", async () => {
   const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
-  const client = new ACPClient({
-    profile: {
-      id: "fake",
-      name: "Fake",
-      command: process.execPath,
-      args: [fixture],
-      env: { PI_ACP_FAKE_AUTH: "1" },
-    },
-    cwd: join(fixture, ".."),
-  });
+  const client = new ACPClient({ profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture], env: { PI_ACP_FAKE_AUTH: "1" } }, cwd: join(fixture, "..") });
   await client.start();
   await assert.rejects(client.authenticate("missing"), /was not advertised/);
   await assert.rejects(client.newSession(process.cwd()), /authentication required/);
@@ -181,13 +154,7 @@ test("rejects authentication methods that were not advertised", async () => {
 test("surfaces agent authentication failures", async () => {
   const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
   const client = new ACPClient({
-    profile: {
-      id: "fake",
-      name: "Fake",
-      command: process.execPath,
-      args: [fixture],
-      env: { PI_ACP_FAKE_AUTH: "1", PI_ACP_FAKE_AUTH_FAILURE: "1" },
-    },
+    profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture], env: { PI_ACP_FAKE_AUTH: "1", PI_ACP_FAKE_AUTH_FAILURE: "1" } },
     cwd: join(fixture, ".."),
     onAuthenticate: async () => "fake-login",
   });
