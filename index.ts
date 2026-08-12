@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ACPClient, type ACPProfile } from "./acp.ts";
+import { ACPClient, type ACPPromptContent, type ACPProfile } from "./acp.ts";
 import { bindingFromEntries, canonicalCWD, loadConfig, selectedProfileFromEntries, type ACPBinding } from "./config.ts";
 
 type EventStream = AsyncIterableIterator<any> & { push(value: any): void; end(): void };
@@ -87,7 +87,7 @@ export default function piACPClient(pi: ExtensionAPI): void {
             block.text = liveText;
             stream.push({ type: "text_delta", contentIndex: 0, delta, partial: output });
           };
-          const message = latestText(context.messages ?? []);
+          const message = latestPrompt(context.messages ?? []);
           const piSessionID = activeSessionManager?.getSessionId?.();
           const userEntryID = activeSessionManager?.getLeafId?.();
           if (typeof piSessionID !== "string" || !piSessionID || typeof userEntryID !== "string" || !userEntryID) {
@@ -278,12 +278,17 @@ function createStream(): EventStream {
   } as EventStream;
 }
 
-function latestText(messages: any[]): string {
+function latestPrompt(messages: any[]): string | ACPPromptContent[] {
   const message = [...messages].reverse().find((candidate) => candidate.role === "user");
   if (!message) throw new Error("ACP requires a user message");
   if (typeof message.content === "string") return message.content;
-  if (!Array.isArray(message.content) || message.content.some((part: any) => part?.type !== "text")) throw new Error("ACP v1 supports text input only");
-  return message.content.map((part: any) => part.text ?? "").join("");
+  if (!Array.isArray(message.content)) throw new Error("ACP user content must be text or an array of content blocks");
+  for (const [index, part] of message.content.entries()) {
+    if (part?.type === "text" && typeof part.text === "string") continue;
+    if (part?.type === "resource_link" && typeof part.uri === "string") continue;
+    throw new Error(`ACP prompt content block ${index} has unsupported type: ${String(part?.type)}`);
+  }
+  return message.content as ACPPromptContent[];
 }
 
 function assistantOutput(model: any): any {

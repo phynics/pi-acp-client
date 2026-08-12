@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ACPClient } from "../acp.ts";
+import { ACPClient, type ACPPromptContent } from "../acp.ts";
 
 test("runs the generic ACP lifecycle against a fake agent", async () => {
   const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
@@ -59,4 +59,42 @@ test("cancels prompt turns with the stable session/cancel notification", async (
   const cancelIndex = messages.findIndex((message) => message.method === "session/cancel");
   assert.ok(permissionIndex >= 0, "pending permission must receive a cancelled outcome");
   assert.ok(cancelIndex > permissionIndex, "permission cancellation must precede session/cancel");
+});
+
+test("forwards text and resource-link prompt content", async () => {
+  const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
+  const client = new ACPClient({
+    profile: {
+      id: "fake",
+      name: "Fake",
+      command: process.execPath,
+      args: [fixture],
+      env: { PI_ACP_FAKE_AUTO_REPLY: "1" },
+    },
+    cwd: join(fixture, ".."),
+  });
+  await client.start();
+  const session = await client.newSession(process.cwd());
+  const prompt: ACPPromptContent[] = [
+    { type: "text", text: "Open this file: " },
+    { type: "resource_link", uri: "file:///tmp/example.txt", name: "example.txt" },
+  ];
+  const result = await client.prompt(session.sessionId, prompt, {});
+  assert.deepEqual(result.prompt, prompt);
+  await client.shutdown();
+});
+
+test("rejects unsupported prompt content blocks", async () => {
+  const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
+  const client = new ACPClient({
+    profile: { id: "fake", name: "Fake", command: process.execPath, args: [fixture] },
+    cwd: join(fixture, ".."),
+  });
+  await client.start();
+  const session = await client.newSession(process.cwd());
+  await assert.rejects(
+    client.prompt(session.sessionId, [{ type: "image" } as any], {}),
+    /unsupported type: image/,
+  );
+  await client.shutdown();
 });

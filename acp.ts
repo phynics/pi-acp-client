@@ -13,6 +13,25 @@ export type ACPNotification = {
   params?: any;
 };
 
+export type ACPTextContent = {
+  type: "text";
+  text: string;
+};
+
+export type ACPResourceLinkContent = {
+  type: "resource_link";
+  uri: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  size?: number;
+  _meta?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export type ACPPromptContent = ACPTextContent | ACPResourceLinkContent;
+
 export type ACPClientOptions = {
   profile: ACPProfile;
   cwd: string;
@@ -139,7 +158,7 @@ export class ACPClient {
     await this.request("session/close", { sessionId });
   }
 
-  async prompt(sessionId: string, text: string, metadata: Record<string, unknown>, signal?: AbortSignal): Promise<any> {
+  async prompt(sessionId: string, content: string | ACPPromptContent[], metadata: Record<string, unknown>, signal?: AbortSignal): Promise<any> {
     let release!: () => void;
     const previous = this.promptTail;
     this.promptTail = new Promise<void>((resolve) => { release = resolve; });
@@ -159,7 +178,7 @@ export class ACPClient {
       try {
         const result = await this.request("session/prompt", {
         sessionId,
-        prompt: [{ type: "text", text }],
+        prompt: normalizePromptContent(content),
         mcpServers: [],
         _meta: metadata,
         });
@@ -258,4 +277,15 @@ function abortError(): Error {
 
 function cancelledPermission(): any {
   return { outcome: { outcome: "cancelled" } };
+}
+
+function normalizePromptContent(content: string | ACPPromptContent[]): ACPPromptContent[] {
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (!Array.isArray(content)) throw new Error("ACP prompt content must be text or an array of content blocks");
+  return content.map((block, index) => {
+    if (!block || typeof block !== "object") throw new Error(`ACP prompt content block ${index} is invalid`);
+    if (block.type === "text" && typeof block.text === "string") return block;
+    if (block.type === "resource_link" && typeof block.uri === "string") return block;
+    throw new Error(`ACP prompt content block ${index} has unsupported type: ${String(block.type)}`);
+  });
 }
