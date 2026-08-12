@@ -60,3 +60,44 @@ test("cancels prompt turns with the stable session/cancel notification", async (
   assert.ok(permissionIndex >= 0, "pending permission must receive a cancelled outcome");
   assert.ok(cancelIndex > permissionIndex, "permission cancellation must precede session/cancel");
 });
+
+test("uses requestId for JSON-RPC request cancellation", async () => {
+  const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
+  const trace = join(await mkdtemp(join(tmpdir(), "pi-acp-request-cancel-")), "trace.jsonl");
+  const client = new ACPClient({
+    profile: {
+      id: "fake",
+      name: "Fake",
+      command: process.execPath,
+      args: [fixture],
+      env: { PI_ACP_FAKE_TRACE: trace },
+    },
+    cwd: join(fixture, ".."),
+  });
+  await client.start();
+  const controller = new AbortController();
+  const request = client.request("wait", undefined, controller.signal);
+  setTimeout(() => controller.abort(), 10);
+  await assert.rejects(request, { name: "AbortError" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const messages = (await readFile(trace, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  const wait = messages.find((message) => message.method === "wait");
+  const cancellation = messages.find((message) => message.method === "$/cancel_request");
+  assert.equal(typeof wait?.id, "number");
+  assert.deepEqual(cancellation?.params, { requestId: wait?.id });
+  assert.equal("id" in (cancellation?.params ?? {}), false);
+  await client.shutdown();
+});
+
+test("correlates string JSON-RPC response IDs", async () => {
+  const client = new ACPClient({
+    profile: { id: "fake", name: "Fake", command: process.execPath },
+    cwd: process.cwd(),
+  });
+  const transport = client as any;
+  const result = new Promise((resolve, reject) => {
+    transport.pending.set("string-request", { resolve, reject });
+  });
+  transport.consume(JSON.stringify({ jsonrpc: "2.0", id: "string-request", result: { ok: true } }) + "\n");
+  assert.deepEqual(await result, { ok: true });
+});
