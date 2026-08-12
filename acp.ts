@@ -32,11 +32,19 @@ export type ACPResourceLinkContent = {
 
 export type ACPPromptContent = ACPTextContent | ACPResourceLinkContent;
 
+export type ACPAuthMethod = {
+  id: string;
+  name?: string;
+  description?: string;
+  type?: string;
+  [key: string]: unknown;
+};
 export type ACPClientOptions = {
   profile: ACPProfile;
   cwd: string;
   onNotification?: (notification: ACPNotification) => void;
   onPermission?: (params: any) => Promise<any>;
+  onAuthenticate?: (methods: ACPAuthMethod[]) => Promise<string | undefined>;
 };
 
 export class ACPRequestError extends Error {
@@ -57,7 +65,7 @@ export class ACPClient {
   private readonly options: ACPClientOptions;
   private process?: ChildProcessWithoutNullStreams;
   private nextID = 1;
-  private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  private pending = new Map<string | number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   private frameBuffer = "";
   private closed = false;
   private promptTail: Promise<void> = Promise.resolve();
@@ -93,15 +101,44 @@ export class ACPClient {
       this.closed = true;
       this.failPending(new Error(`ACP agent exited (${code ?? "signal " + signal})`));
     });
-    this.initializeResult = await this.request("initialize", {
-      protocolVersion: 1,
-      clientCapabilities: {},
-      clientInfo: { name: "pi-acp-client", version: "0.1.0" },
-    });
+    try {
+      this.initializeResult = await this.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+        clientInfo: { name: "pi-acp-client", version: "0.1.0" },
+      });
+      if (this.initializeResult?.protocolVersion !== 1) {
+        throw new Error(`ACP agent negotiated unsupported protocol version: ${String(this.initializeResult?.protocolVersion)}`);
+      }
+      if (this.options.onAuthenticate && this.authMethods.length) {
+        const methodID = await this.options.onAuthenticate(this.authMethods);
+        if (methodID !== undefined) await this.authenticate(methodID);
+      }
+    } catch (error) {
+      this.closed = true;
+      child.stdin.end();
+      child.kill();
+      this.process = undefined;
+      throw error;
+    }
   }
 
   get supportsSessionList(): boolean {
-    return Boolean(this.initializeResult?.agentCapabilities?.sessionCapabilities?.list);
+    return isAdvertised(this.initializeResult?.agentCapabilities?.sessionCapabilities?.list);
+  }
+
+  get supportsSessionResume(): boolean {
+    return isAdvertised(this.initializeResult?.agentCapabilities?.sessionCapabilities?.resume);
+  }
+
+  get supportsSessionClose(): boolean {
+    return isAdvertised(this.initializeResult?.agentCapabilities?.sessionCapabilities?.close);
+  }
+
+  get authMethods(): ACPAuthMethod[] {
+    return Array.isArray(this.initializeResult?.authMethods)
+      ? this.initializeResult.authMethods.filter((method: any) => typeof method?.id === "string")
+      : [];
   }
 
   async shutdown(): Promise<void> {
@@ -128,7 +165,7 @@ export class ACPClient {
       }
       const onAbort = () => {
         this.pending.delete(id);
-        this.write({ jsonrpc: "2.0", method: "$/cancel_request", params: { id } });
+        this.write({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: id } });
         reject(abortError());
       };
       this.pending.set(id, {
@@ -145,6 +182,7 @@ export class ACPClient {
   }
 
   async resume(sessionId: string, cwd: string): Promise<void> {
+    if (!this.supportsSessionResume) throw new Error("ACP agent does not advertise session/resume");
     await this.request("session/resume", { sessionId, cwd, mcpServers: [] });
   }
 
@@ -155,10 +193,19 @@ export class ACPClient {
   }
 
   async closeSession(sessionId: string): Promise<void> {
+    if (!this.supportsSessionClose) throw new Error("ACP agent does not advertise session/close");
     await this.request("session/close", { sessionId });
   }
 
+  async authenticate(methodID: string): Promise<void> {
+    if (!this.authMethods.some((method) => method.id === methodID)) {
+      throw new Error(`ACP authentication method was not advertised: ${methodID}`);
+    }
+    await this.request("authenticate", { methodId: methodID });
+  }
+
   async prompt(sessionId: string, content: string | ACPPromptContent[], metadata: Record<string, unknown>, signal?: AbortSignal): Promise<any> {
+
     let release!: () => void;
     const previous = this.promptTail;
     this.promptTail = new Promise<void>((resolve) => { release = resolve; });
@@ -216,7 +263,7 @@ export class ACPClient {
         } else {
           this.options.onNotification?.({ method: message.method, params: message.params });
         }
-      } else if (typeof message.id === "number") {
+      } else if (isResponseID(message.id)) {
         const waiter = this.pending.get(message.id);
         if (!waiter) continue;
         this.pending.delete(message.id);
@@ -288,4 +335,12 @@ function normalizePromptContent(content: string | ACPPromptContent[]): ACPPrompt
     if (block.type === "resource_link" && typeof block.uri === "string") return block;
     throw new Error(`ACP prompt content block ${index} has unsupported type: ${String(block.type)}`);
   });
+}
+
+function isAdvertised(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== false;
+}
+
+function isResponseID(value: unknown): value is string | number {
+  return typeof value === "string" || typeof value === "number";
 }
