@@ -60,3 +60,39 @@ test("cancels prompt turns with the stable session/cancel notification", async (
   assert.ok(permissionIndex >= 0, "pending permission must receive a cancelled outcome");
   assert.ok(cancelIndex > permissionIndex, "permission cancellation must precede session/cancel");
 });
+
+test("rejects an unsupported negotiated protocol version", async () => {
+  const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
+  const client = new ACPClient({
+    profile: {
+      id: "fake",
+      name: "Fake",
+      command: process.execPath,
+      args: [fixture],
+      env: { PI_ACP_FAKE_PROTOCOL_VERSION: "2" },
+    },
+    cwd: join(fixture, ".."),
+  });
+  await assert.rejects(client.start(), /unsupported protocol version/);
+  await client.shutdown();
+});
+
+test("does not call unadvertised optional session methods", async () => {
+  const fixture = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
+  const client = new ACPClient({
+    profile: {
+      id: "fake",
+      name: "Fake",
+      command: process.execPath,
+      args: [fixture],
+      env: { PI_ACP_FAKE_NO_OPTIONAL_SESSION_CAPS: "1" },
+    },
+    cwd: join(fixture, ".."),
+  });
+  await client.start();
+  assert.equal(client.supportsSessionResume, false);
+  assert.equal(client.supportsSessionClose, false);
+  await assert.rejects(client.resume("session", process.cwd()), /does not advertise session\/resume/);
+  await assert.rejects(client.closeSession("session"), /does not advertise session\/close/);
+  await client.shutdown();
+});

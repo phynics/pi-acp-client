@@ -193,6 +193,7 @@ export default function piACPClient(pi: ExtensionAPI): void {
     if (saved) {
       if (saved.profileID !== profile.id) throw new Error("ACP profile changed; start a new Pi session with /acp-use");
       if (saved.canonicalCWD !== currentCWD()) throw new Error("ACP working directory changed; start a new Pi session");
+      if (!client.supportsSessionResume) throw new Error("ACP agent does not advertise session/resume; start a new Pi session");
       binding = saved;
       await client.resume(saved.acpSessionID, saved.canonicalCWD);
     } else if (event.reason === "new" || event.reason === "startup") {
@@ -241,8 +242,12 @@ export default function piACPClient(pi: ExtensionAPI): void {
         setup: async (sessionManager: any) => { sessionManager.appendCustomEntry("acp-binding", nextBinding); },
       });
       if (switched.cancelled) {
-        await client.closeSession(session.sessionId);
-        notify(ctx, "New Pi session was cancelled; ACP session was closed", "warning");
+        if (client.supportsSessionClose) {
+          await client.closeSession(session.sessionId);
+          notify(ctx, "New Pi session was cancelled; ACP session was closed", "warning");
+        } else {
+          notify(ctx, "New Pi session was cancelled; the ACP agent does not support session/close", "warning");
+        }
       }
     },
   });

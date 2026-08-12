@@ -11,9 +11,12 @@ for await (const line of input) {
     appendFileSync(process.env.PI_ACP_FAKE_TRACE, JSON.stringify(request) + "\n");
   }
   if (request.method === "initialize") {
+    const sessionCapabilities = process.env.PI_ACP_FAKE_NO_OPTIONAL_SESSION_CAPS
+      ? { list: {} }
+      : { list: {}, resume: {}, close: {} };
     reply(request, {
-      protocolVersion: 1,
-      agentCapabilities: { sessionCapabilities: { list: {} } },
+      protocolVersion: Number(process.env.PI_ACP_FAKE_PROTOCOL_VERSION ?? "1"),
+      agentCapabilities: { sessionCapabilities },
     });
   } else if (request.method === "session/new") {
     reply(request, { sessionId: "fake-session" });
