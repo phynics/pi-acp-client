@@ -38,7 +38,7 @@ export class ACPClient {
   private readonly options: ACPClientOptions;
   private process?: ChildProcessWithoutNullStreams;
   private nextID = 1;
-  private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  private pending = new Map<string | number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   private frameBuffer = "";
   private closed = false;
   private promptTail: Promise<void> = Promise.resolve();
@@ -128,7 +128,7 @@ export class ACPClient {
       }
       const onAbort = () => {
         this.pending.delete(id);
-        this.write({ jsonrpc: "2.0", method: "$/cancel_request", params: { id } });
+        this.write({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: id } });
         reject(abortError());
       };
       this.pending.set(id, {
@@ -218,7 +218,7 @@ export class ACPClient {
         } else {
           this.options.onNotification?.({ method: message.method, params: message.params });
         }
-      } else if (typeof message.id === "number") {
+      } else if (isResponseID(message.id)) {
         const waiter = this.pending.get(message.id);
         if (!waiter) continue;
         this.pending.delete(message.id);
@@ -283,4 +283,8 @@ function cancelledPermission(): any {
 
 function isAdvertised(value: unknown): boolean {
   return value !== undefined && value !== null && value !== false;
+}
+
+function isResponseID(value: unknown): value is string | number {
+  return typeof value === "string" || typeof value === "number";
 }
