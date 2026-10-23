@@ -120,14 +120,6 @@ export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
 
   pi.on("model_select", async (event: any, ctx: any) => {
     const selecting = event.model?.provider === "acp";
-    if (!selecting && binding && profile) {
-      const boundModel = ctx.modelRegistry?.find?.("acp", profile.id);
-      if (boundModel) {
-        await pi.setModel(boundModel);
-        notify(ctx, `This session is bound to ACP profile ${profile.id}; use /acp-use to start a new session before changing profiles`, "warning");
-      }
-      return;
-    }
     if (selecting) activateACP(ctx);
     else deactivateACP(ctx);
   });
@@ -164,7 +156,7 @@ export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
     if (requestedProfileID && !profile) throw new Error(`unknown ACP profile: ${requestedProfileID}`);
     if (!profile) throw new Error("No ACP profile configured");
     if (explicitProfileSelection) {
-      const selectedModel = ctx.modelRegistry?.find?.("acp", profile.id);
+      const selectedModel = ctx.modelRegistry?.find?.("acp", `acp/${profile.id}`);
       if (!selectedModel || !(await pi.setModel(selectedModel))) {
         throw new Error(`Could not activate ACP model acp/${profile.id} for the selected profile`);
       }

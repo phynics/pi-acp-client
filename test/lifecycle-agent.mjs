@@ -7,9 +7,9 @@ for await (const line of input) {
   const request = JSON.parse(line);
   trace(request);
   if (request.method === "initialize") {
-    reply(request, { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { resume: {}, close: {} } } });
+    reply(request, { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } } });
   } else if (request.method === "session/new") {
-    reply(request, { sessionId: `session-${process.env.PI_ACP_AGENT_NAME}` });
+    reply(request, { sessionId: `session-${process.env.PI_ACP_AGENT_NAME}-${process.pid}` });
   } else if (request.method === "session/resume" || request.method === "session/close" || request.method === "shutdown") {
     reply(request, {});
     if (request.method === "shutdown") setTimeout(() => process.exit(0), 10);
@@ -18,8 +18,8 @@ for await (const line of input) {
       sessionId: request.params.sessionId,
       toolCall: { title: "Fixture tool" },
       options: [
-        { optionId: "allow_once", name: "Allow", kind: "allow_once" },
         { optionId: "allow_always", name: "Allow", kind: "allow_always" },
+        { optionId: "allow_once", name: "Allow", kind: "allow_once" },
       ],
     } })}\n`);
     globalThis.pendingPrompt = request;

@@ -21,12 +21,15 @@ test("ACP lifecycle binds prompts to the selected profile and keeps command outp
   process.env.PI_ACP_LIFECYCLE_TRACE = tracePath;
   let first: ReturnType<typeof createHarness> | undefined;
   let second: ReturnType<typeof createHarness> | undefined;
+  let replacement: ReturnType<typeof createHarness> | undefined;
   try {
     first = createHarness();
     await first.start({ reason: "startup", model: { provider: "acp", id: "acp/a" }, entries: [] });
     assert.deepEqual(first.activeTools, []);
     await first.events.get("model_select")?.({ model: { provider: "native", id: "native/model" } }, first.context);
-    assert.deepEqual(first.modelSelections, ["acp/a"], "native model selection must not detach an ACP-owned transcript");
+    assert.deepEqual(first.activeTools, ["read", "bash"], "native selection must restore Pi tools");
+    await first.events.get("model_select")?.({ model: { provider: "acp", id: "acp/a" } }, first.context);
+    assert.deepEqual(first.activeTools, [], "selecting ACP must suspend Pi tools");
 
     const mismatch = await collect(first.provider.streamSimple({ provider: "acp", id: "acp/b", api: "acp-v1" }, { messages: [{ role: "user", content: "wrong agent" }] }, {}));
     assert.ok(mismatch.some((event) => event.type === "error" && /bound to profile a/.test(event.error.errorMessage)));
@@ -56,11 +59,22 @@ test("ACP lifecycle binds prompts to the selected profile and keeps command outp
     await second.commands.get("acp-new")?.("", second.context);
     assert.equal((await readFile(tracePath, "utf8")).trim().split("\n").filter((line) => JSON.parse(line).method === "session/new").length, beforeNewCommand,
       "/acp-new must defer ACP session creation until the replacement runtime starts");
+    const replacementEntries: any[] = [];
+    await second.newSessionOptions.at(-1).setup({ appendCustomEntry(type: string, data: unknown) { replacementEntries.push({ type: "custom", customType: type, data }); } });
+    await second.shutdown();
+    replacement = createHarness();
+    await replacement.start({ reason: "new", model: { provider: "acp", id: "acp/a" }, entries: replacementEntries });
+    assert.equal(replacement.context.model.id, "acp/b", "/acp-use must activate the actual registered acp/b model");
+    const bPrompt = await collect(replacement.provider.streamSimple({ provider: "acp", id: "acp/b", api: "acp-v1" }, { messages: [{ role: "user", content: "replacement B" }] }, {}));
+    assert.ok(bPrompt.some((event) => event.type === "done"), "new session must prompt the selected non-resumable agent");
+    const wrongAgent = await collect(replacement.provider.streamSimple({ provider: "acp", id: "acp/a", api: "acp-v1" }, { messages: [{ role: "user", content: "wrong agent" }] }, {}));
+    assert.ok(wrongAgent.some((event) => event.type === "error" && /bound to profile b/.test(event.error.errorMessage)));
     const frames = (await readFile(tracePath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-    assert.ok(frames.some((frame) => frame.method === "session/prompt" && frame.params?.sessionId === "session-a"));
-    assert.ok(frames.some((frame) => frame.selectedPermission === "allow_once"), "permission choice must retain option identity for duplicate labels");
+    assert.ok(frames.some((frame) => frame.method === "session/prompt" && frame.params?.sessionId.startsWith("session-b-")));
+    assert.ok(frames.some((frame) => frame.selectedPermission === "allow_once"), "second duplicate-labeled option must preserve its option ID");
     assert.ok(frames.some((frame) => frame.method === "session/new" && frame.params?.cwd));
   } finally {
+    await replacement?.shutdown().catch(() => {});
     await second?.shutdown().catch(() => {});
     await first?.shutdown().catch(() => {});
     await writeFile(configPath, "{}").catch(() => {});
@@ -80,7 +94,7 @@ function createHarness() {
   let activeTools = ["read", "bash"];
   let provider: any;
   let context: any;
-  const models = [{ id: "a", name: "ACP: Agent A" }, { id: "b", name: "ACP: Agent B" }].map((model) => ({ ...model, provider: "acp", api: "acp-v1" }));
+  const models = [{ id: "acp/a", name: "ACP: Agent A" }, { id: "acp/b", name: "ACP: Agent B" }].map((model) => ({ ...model, provider: "acp", api: "acp-v1" }));
   const pi: any = {
     registerProvider(_id: string, value: any) { provider = value; },
     registerCommand(name: string, value: any) { commands.set(name, value.handler); },
@@ -88,7 +102,7 @@ function createHarness() {
     getActiveTools() { return activeTools; },
     setActiveTools(tools: string[]) { activeTools = tools; },
     appendEntry(type: string, data: unknown) { context.sessionManager.entries.push({ type: "custom", customType: type, data }); },
-    async setModel(model: any) { modelSelections.push(`acp/${model.id}`); context.model = model; return true; },
+    async setModel(model: any) { modelSelections.push(model.id); context.model = model; return true; },
   };
   context = {
     model: undefined,
