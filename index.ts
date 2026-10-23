@@ -17,6 +17,7 @@ export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
   let providerTail: Promise<void> = Promise.resolve();
   let livePanel: string[] = [];
   let activeUI: any;
+  let explicitProfileSelection = false;
 
   const notify = (ctx: any, message: string, level: "info" | "warning" | "error" = "info") => ctx.ui.notify(`[acp] ${message}`, level);
   const currentCWD = () => canonicalCWD();
@@ -76,6 +77,10 @@ export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
           liveText = "";
           setPanel("ACP prompt running…");
           if (!client || !binding || !profile) throw new Error("ACP session is not ready");
+          const requestedModelID = typeof model?.id === "string" ? model.id.replace(/^acp\//, "") : undefined;
+          if (model?.provider !== "acp" || requestedModelID !== profile.id || binding.profileID !== profile.id) {
+            throw new Error(`ACP session is bound to profile ${profile.id}; select that model or use /acp-use <profile> to start a new session`);
+          }
           const block = { type: "text", text: "" };
           output.content = [block];
           stream.push({ type: "text_start", contentIndex: 0, partial: output });
@@ -115,22 +120,30 @@ export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
 
   pi.on("model_select", async (event: any, ctx: any) => {
     const selecting = event.model?.provider === "acp";
+    if (!selecting && binding && profile) {
+      const boundModel = ctx.modelRegistry?.find?.("acp", profile.id);
+      if (boundModel) {
+        await pi.setModel(boundModel);
+        notify(ctx, `This session is bound to ACP profile ${profile.id}; use /acp-use to start a new session before changing profiles`, "warning");
+      }
+      return;
+    }
     if (selecting) activateACP(ctx);
     else deactivateACP(ctx);
   });
 
   pi.on("session_before_compact", async (_event: any, ctx: any) => {
-    if (!providerActive) return;
+    if (!providerActive && !binding) return;
     notify(ctx, "Compaction is disabled while ACP owns session state", "warning");
     return { cancel: true };
   });
   pi.on("session_before_fork", async (_event: any, ctx: any) => {
-    if (!providerActive) return;
+    if (!providerActive && !binding) return;
     notify(ctx, "Fork/clone is disabled while ACP owns session state", "warning");
     return { cancel: true };
   });
   pi.on("session_before_tree", async (_event: any, ctx: any) => {
-    if (!providerActive) return;
+    if (!providerActive && !binding) return;
     notify(ctx, "Tree navigation is disabled while ACP owns session state", "warning");
     return { cancel: true };
   });
@@ -139,16 +152,23 @@ export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
     activeUI = ctx.ui;
     activeSessionManager = ctx.sessionManager;
     const config = await loadConfig(currentCWD(), discoveredProfiles);
-    const selectedModel = ctx.model?.provider === "acp" && typeof ctx.model.id === "string"
+    const selectedEntry = selectedProfileFromEntries(ctx.sessionManager.getEntries());
+    explicitProfileSelection = selectedEntry !== undefined;
+    const selectedModel = !selectedEntry && ctx.model?.provider === "acp" && typeof ctx.model.id === "string"
       ? ctx.model.id.replace(/^acp\//, "")
       : undefined;
-    const selectedEntry = selectedProfileFromEntries(ctx.sessionManager.getEntries());
     const requestedProfileID = selectedModel ?? selectedEntry ?? config.defaultProfile;
     profile = requestedProfileID
       ? config.profiles.find((candidate) => candidate.id === requestedProfileID)
       : config.profiles[0];
     if (requestedProfileID && !profile) throw new Error(`unknown ACP profile: ${requestedProfileID}`);
     if (!profile) throw new Error("No ACP profile configured");
+    if (explicitProfileSelection) {
+      const selectedModel = ctx.modelRegistry?.find?.("acp", profile.id);
+      if (!selectedModel || !(await pi.setModel(selectedModel))) {
+        throw new Error(`Could not activate ACP model acp/${profile.id} for the selected profile`);
+      }
+    }
     liveText = "";
     client = new ACPClient({
       profile,
@@ -174,15 +194,16 @@ export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
         const options = Array.isArray(params?.options) ? params.options : [];
         const tool = params?.toolCall?.title ?? params?.toolCall?.name ?? params?.toolCall?.toolCallId ?? "tool action";
         setPanel(`Permission requested: ${tool}`);
-        const labels = options.map((option: any) => option?.name ?? option?.optionId).filter((value: any) => typeof value === "string");
+        const eligible = options.filter((option: any) => typeof option?.optionId === "string");
+        const labels = eligible.map((option: any, index: number) => `${option.name ?? option.optionId} (${option.kind ?? "option"}/${option.optionId}) [${index + 1}]`);
         const choice = labels.length ? await ctx.ui.select(`ACP permission: ${tool}`, labels) : undefined;
         const index = choice === undefined ? -1 : labels.indexOf(choice);
-        if (index < 0 || typeof options[index]?.optionId !== "string") {
+        if (index < 0) {
           appendPanel("Permission denied");
           return { outcome: { outcome: "cancelled" } };
         }
         appendPanel(`Permission: ${choice}`);
-        return { outcome: { outcome: "selected", optionId: options[index].optionId } };
+        return { outcome: { outcome: "selected", optionId: eligible[index].optionId } };
       },
       onAuthenticate: async (methods) => {
         const labels = methods.map((method) => method.name ?? method.id);
@@ -222,11 +243,14 @@ export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
 
   pi.registerCommand("acp-status", {
     description: "Show the active ACP profile and session",
-    handler: async (_args: string, ctx: any) => notify(ctx, JSON.stringify({ profile, binding, running: client?.isRunning ?? false }, null, 2)),
+    handler: async (_args: string, ctx: any) => notify(ctx, JSON.stringify({ profile: profile && profileSummary(profile), binding, running: client?.isRunning ?? false }, null, 2)),
   });
   pi.registerCommand("acp-profiles", {
     description: "List configured ACP profiles",
-    handler: async (_args: string, ctx: any) => notify(ctx, JSON.stringify(await loadConfig(currentCWD()), null, 2)),
+    handler: async (_args: string, ctx: any) => {
+      const config = await loadConfig(currentCWD());
+      notify(ctx, JSON.stringify({ defaultProfile: config.defaultProfile, profiles: config.profiles.map(profileSummary) }, null, 2));
+    },
   });
   pi.registerCommand("acp-sessions", {
     description: "List sessions known by the selected ACP agent",
@@ -239,19 +263,13 @@ export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
     description: "Create a new ACP session",
     handler: async (_args: string, ctx: any) => {
       if (!client || !profile) return notify(ctx, "ACP is not ready", "error");
-      const session = await client.newSession(currentCWD());
-      const nextBinding: ACPBinding = { bindingVersion: 1, profileID: profile.id, acpSessionID: session.sessionId, canonicalCWD: currentCWD() };
+      const selectedProfileID = profile.id;
+      const selectedProfileName = profile.name;
       const switched = await ctx.newSession({
-        setup: async (sessionManager: any) => { sessionManager.appendCustomEntry("acp-binding", nextBinding); },
+        setup: async (sessionManager: any) => { sessionManager.appendCustomEntry("acp-profile-selection", { profileID: selectedProfileID }); },
+        withSession: async (nextCtx: any) => notify(nextCtx, `New ACP session started for ${selectedProfileName}`),
       });
-      if (switched.cancelled) {
-        if (client.supportsSessionClose) {
-          await client.closeSession(session.sessionId);
-          notify(ctx, "New Pi session was cancelled; ACP session was closed", "warning");
-        } else {
-          notify(ctx, "New Pi session was cancelled; the ACP agent does not support session/close", "warning");
-        }
-      }
+      if (switched.cancelled) notify(ctx, "New Pi session was cancelled; current ACP session is unchanged", "warning");
     },
   });
   pi.registerCommand("acp-use", {
@@ -268,10 +286,15 @@ export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
         setup: async (sessionManager: any) => {
           sessionManager.appendCustomEntry("acp-profile-selection", { profileID: selected.id });
         },
+        withSession: async (nextCtx: any) => notify(nextCtx, `ACP profile ${selected.name} ready in a new session`),
       });
       if (switched.cancelled) notify(ctx, "ACP profile change was cancelled; current binding is unchanged", "warning");
     },
   });
+}
+
+function profileSummary(profile: ACPProfile): { id: string; name: string } {
+  return { id: profile.id, name: profile.name };
 }
 
 function createStream(): EventStream {
