@@ -68,6 +68,7 @@ export class ACPClient {
   private pending = new Map<string | number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   private frameBuffer = "";
   private closed = false;
+  private shuttingDown?: Promise<void>;
   private promptTail: Promise<void> = Promise.resolve();
   private initializeResult: any = undefined;
   private pendingPermissions = new Map<string | number, { sessionId: string }>();
@@ -94,12 +95,14 @@ export class ACPClient {
     child.stdout.on("data", (chunk: string) => this.consume(chunk));
     child.stderr.on("data", () => { /* stderr is intentionally not ACP data */ });
     child.on("error", (error) => {
-      this.closed = true;
-      this.failPending(error instanceof Error ? error : new Error(String(error)));
+      this.failConnection(error instanceof Error ? error : new Error(String(error)));
+    });
+    child.stdin.on("error", (error) => this.failConnection(error));
+    child.stdin.on("close", () => {
+      if (!child.stdin.writableEnded) this.failConnection(new Error("ACP agent stdin closed unexpectedly"));
     });
     child.on("exit", (code, signal) => {
-      this.closed = true;
-      this.failPending(new Error(`ACP agent exited (${code ?? "signal " + signal})`));
+      this.failConnection(new Error(`ACP agent exited (${code ?? "signal " + signal})`));
     });
     try {
       this.initializeResult = await this.request("initialize", {
@@ -142,16 +145,24 @@ export class ACPClient {
   }
 
   async shutdown(): Promise<void> {
-    if (!this.process) return;
-    try {
-      if (!this.closed) await this.request("shutdown", {});
-    } catch {
-      // A crashed agent is already shut down from the client's perspective.
-    }
-    this.closed = true;
-    this.process.stdin.end();
-    this.process.kill();
-    this.process = undefined;
+    if (this.shuttingDown) return this.shuttingDown;
+    const child = this.process;
+    if (!child) return;
+    this.shuttingDown = (async () => {
+      this.closed = true;
+      this.failPending(new Error("ACP agent is shutting down"));
+      try {
+        child.stdin.end();
+        if (await waitForClose(child, 300)) return;
+        child.kill("SIGTERM");
+        if (await waitForClose(child, 300)) return;
+        child.kill("SIGKILL");
+        await waitForClose(child, 500);
+      } finally {
+        this.process = undefined;
+      }
+    })();
+    return this.shuttingDown;
   }
 
   async request(method: string, params?: unknown, signal?: AbortSignal): Promise<any> {
@@ -173,7 +184,7 @@ export class ACPClient {
         reject: (error) => { signal?.removeEventListener("abort", onAbort); reject(error); },
       });
       signal?.addEventListener("abort", onAbort, { once: true });
-      this.process?.stdin.write(request);
+      this.write(JSON.parse(request));
     });
   }
 
@@ -188,8 +199,19 @@ export class ACPClient {
 
   async list(cwd?: string): Promise<any[]> {
     if (!this.supportsSessionList) throw new Error("ACP agent does not advertise session/list");
-    const result = await this.request("session/list", cwd ? { cwd } : {});
-    return Array.isArray(result?.sessions) ? result.sessions : [];
+    const sessions: any[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < 100; page++) {
+      const result = await this.request("session/list", { ...(cwd ? { cwd } : {}), ...(cursor !== undefined ? { cursor } : {}) });
+      if (Array.isArray(result?.sessions)) sessions.push(...result.sessions);
+      const next = result?.nextCursor;
+      if (typeof next !== "string") return sessions;
+      if (cursors.has(next)) throw new Error(`ACP session/list repeated cursor: ${next}`);
+      cursors.add(next);
+      cursor = next;
+    }
+    throw new Error("ACP session/list exceeded 100 pages");
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -260,6 +282,8 @@ export class ACPClient {
       if (typeof message.method === "string") {
         if (message.method === "session/request_permission" && (typeof message.id === "number" || typeof message.id === "string")) {
           void this.answerPermission(message);
+        } else if (Object.hasOwn(message, "id")) {
+          this.write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } });
         } else {
           this.options.onNotification?.({ method: message.method, params: message.params });
         }
@@ -307,7 +331,18 @@ export class ACPClient {
 
   private write(message: unknown): void {
     if (!this.process || this.closed) return;
-    this.process.stdin.write(JSON.stringify(message) + "\n");
+    try {
+      this.process.stdin.write(JSON.stringify(message) + "\n");
+    } catch (error) {
+      this.failConnection(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  private failConnection(error: Error): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.failPending(error);
+    this.process?.kill();
   }
 
   private failPending(error: Error): void {
@@ -343,4 +378,18 @@ function isAdvertised(value: unknown): boolean {
 
 function isResponseID(value: unknown): value is string | number {
   return typeof value === "string" || typeof value === "number";
+}
+
+function waitForClose(child: ChildProcessWithoutNullStreams, milliseconds: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => finish(false), milliseconds);
+    const finish = (closed: boolean) => {
+      clearTimeout(timer);
+      child.removeListener("close", onClose);
+      resolve(closed);
+    };
+    const onClose = () => finish(true);
+    child.once("close", onClose);
+  });
 }

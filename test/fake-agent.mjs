@@ -3,6 +3,13 @@ import { appendFileSync } from "node:fs";
 
 const input = readline.createInterface({ input: process.stdin });
 const keepAlive = setInterval(() => {}, 1_000);
+input.on("close", () => {
+  if (process.env.PI_ACP_FAKE_TRACE) appendFileSync(process.env.PI_ACP_FAKE_TRACE, JSON.stringify({ method: "__stdin_eof" }) + "\n");
+  if (!process.env.PI_ACP_FAKE_HANG_ON_EOF) {
+    clearInterval(keepAlive);
+    process.exit(0);
+  }
+});
 let pendingPrompt;
 let authenticated = false;
 for await (const line of input) {
@@ -41,7 +48,15 @@ for await (const line of input) {
   } else if (request.method === "session/resume" || request.method === "session/close") {
     reply(request, {});
   } else if (request.method === "session/list") {
-    reply(request, { sessions: [{ sessionId: "fake-session", cwd: request.params?.cwd ?? process.cwd() }] });
+    if (process.env.PI_ACP_FAKE_REPEAT_CURSOR) {
+      reply(request, { sessions: [], nextCursor: "repeat" });
+    } else if (process.env.PI_ACP_FAKE_PAGINATE && request.params?.cursor !== "second") {
+      reply(request, { sessions: [{ sessionId: "page-one" }], nextCursor: "second" });
+    } else if (process.env.PI_ACP_FAKE_PAGINATE) {
+      reply(request, { sessions: [{ sessionId: "page-two" }] });
+    } else {
+      reply(request, { sessions: [{ sessionId: "fake-session", cwd: request.params?.cwd ?? process.cwd() }] });
+    }
   } else if (request.method === "session/prompt") {
     pendingPrompt = request;
     if (process.env.PI_ACP_FAKE_AUTO_REPLY) {
@@ -64,6 +79,9 @@ for await (const line of input) {
     }) + "\n");
   } else if (request.method === "wait") {
     // Intentionally left pending so the client-side request cancellation path can be tested.
+  } else if (request.method === "trigger-unsupported") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: "unsupported-1", method: "agent/unknown", params: {} }) + "\n");
+    reply(request, {});
   } else if (request.id === "permission-1" && pendingPrompt) {
     if (pendingPrompt.params?.prompt?.[0]?.text === "cancel me"
         && request.result?.outcome?.outcome === "cancelled") continue;

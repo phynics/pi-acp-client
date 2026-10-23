@@ -82,5 +82,5 @@ const permission = frames.find((frame) => frame.id === "permission-1" && frame.r
 if (permission?.result?.outcome?.outcome !== "cancelled") {
   throw new Error("Headless Pi did not deterministically deny the ACP permission request");
 }
-if (!frames.some((frame) => frame.method === "shutdown")) throw new Error("Pi did not shut down the ACP child cleanly");
+if (!frames.some((frame) => frame.method === "__stdin_eof")) throw new Error("Pi did not close ACP stdin and allow the agent to exit");
 process.stdout.write("Pi ACP loader smoke passed\n");
