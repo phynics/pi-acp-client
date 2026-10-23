@@ -33,6 +33,7 @@
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "check": "tsc --noEmit && node --experimental-strip-types --check index.ts && node --experimental-strip-types --check acp.ts && node --experimental-strip-types --check config.ts",
     "smoke:loader": "node test/loader-smoke.mjs",
-    "pack:check": "npm pack --dry-run"
+    "pack:check": "npm pack --dry-run",
+    "compat:pi": "node scripts/verify-pi-compat.mjs"
   }
 }

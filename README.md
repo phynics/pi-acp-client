@@ -53,6 +53,11 @@ npm test
 npm run check
 npm run smoke:loader
 npm run pack:check
+npm run compat:pi -- 0.84.1 1.0.0 1.4.0
 ```
+
+The compatibility runner copies the package into a temporary directory, installs
+the requested Pi versions there without changing this repository's lockfile,
+and runs the tests, type check, and loader smoke for each version.
 
 MIT licensed.

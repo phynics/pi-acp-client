@@ -19,17 +19,17 @@ export type ACPBinding = {
   canonicalCWD: string;
 };
 
+export type ACPProfileConfig = Pick<ACPConfig, "profiles">;
+
+const SOURCE_TIMEOUT_MS = 1_000;
+
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 
-export async function loadConfig(cwd = process.cwd()): Promise<ACPConfig> {
-  cwd = canonicalCWD(cwd);
+export async function loadProfileConfig(): Promise<ACPProfileConfig> {
   const globalPath = process.env.PI_ACP_CONFIG ?? join(homedir(), ".pi", "agent", "acp-profiles.json");
   const global = await readJSON(globalPath, { version: 1, profiles: [] });
   validateConfig(global);
-  const project = await readJSON(join(cwd, ".pi", "acp.json"), { version: 1 });
-  if (project?.version !== 1 || (project.defaultProfile !== undefined && typeof project.defaultProfile !== "string")) {
-    throw new Error("project ACP config must contain version 1 and an optional defaultProfile string");
-  }
+  const cwd = canonicalCWD();
   const profiles = new Map(global.profiles.map((profile) => [profile.id, profile]));
   const sourceProfileIDs = new Set<string>();
   for (const source of global.sources ?? []) {
@@ -41,6 +41,20 @@ export async function loadConfig(cwd = process.cwd()): Promise<ACPConfig> {
       profiles.set(profile.id, profile);
     }
   }
+  return { profiles: [...profiles.values()] };
+}
+
+export async function loadConfig(cwd = process.cwd(), discovered?: ACPProfileConfig): Promise<ACPConfig> {
+  cwd = canonicalCWD(cwd);
+  discovered ??= await loadProfileConfig();
+  const globalPath = process.env.PI_ACP_CONFIG ?? join(homedir(), ".pi", "agent", "acp-profiles.json");
+  const global = await readJSON(globalPath, { version: 1, profiles: [] });
+  validateConfig(global);
+  const project = await readJSON(join(cwd, ".pi", "acp.json"), { version: 1 });
+  if (project?.version !== 1 || (project.defaultProfile !== undefined && typeof project.defaultProfile !== "string")) {
+    throw new Error("project ACP config must contain version 1 and an optional defaultProfile string");
+  }
+  const profiles = new Map(discovered.profiles.map((profile) => [profile.id, profile]));
   const defaultProfile = process.env.PI_ACP_PROFILE ?? project.defaultProfile ?? global.defaultProfile;
   if (defaultProfile !== undefined && !profiles.has(defaultProfile)) {
     throw new Error(`unknown ACP profile: ${defaultProfile}`);
@@ -99,7 +113,7 @@ async function readJSON(path: string, fallback: any): Promise<any> {
 
 async function runSource(command: string, args: string[], env: Record<string, string>, cwd: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, env: { ...process.env, ...env }, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(command, args, { cwd, env: { ...process.env, ...env }, maxBuffer: 1024 * 1024, timeout: SOURCE_TIMEOUT_MS, killSignal: "SIGKILL" }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(`ACP profile source failed: ${stderr.trim() || error.message}`));
         return;

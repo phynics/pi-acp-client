@@ -23,7 +23,16 @@ test("ACP provider disables Pi tools and blocks transcript-splitting operations"
       setWidget() {},
     },
   };
-  piACPClient(pi);
+  const previous = process.env.PI_ACP_CONFIG;
+  const directory = await mkdtemp(join(tmpdir(), "pi-acp-provider-empty-"));
+  const configPath = join(directory, "profiles.json");
+  await writeFile(configPath, JSON.stringify({ version: 1, profiles: [] }));
+  process.env.PI_ACP_CONFIG = configPath;
+  try { await piACPClient(pi); }
+  finally {
+    if (previous === undefined) delete process.env.PI_ACP_CONFIG;
+    else process.env.PI_ACP_CONFIG = previous;
+  }
 
   await events.get("model_select")?.({ model: { provider: "acp" } }, context);
   assert.deepEqual(activeTools, []);
@@ -52,7 +61,7 @@ test("dynamic profile sources replace static model registrations", async () => {
   process.env.PI_ACP_CONFIG = configPath;
   let provider: any;
   try {
-    piACPClient({
+    await piACPClient({
       registerProvider(_id: string, value: any) { provider = value; },
       registerCommand() {},
       on() {},

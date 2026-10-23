@@ -1,14 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { ACPClient, type ACPPromptContent, type ACPProfile } from "./acp.ts";
-import { bindingFromEntries, canonicalCWD, loadConfig, selectedProfileFromEntries, type ACPBinding } from "./config.ts";
+import { bindingFromEntries, canonicalCWD, loadConfig, loadProfileConfig, selectedProfileFromEntries, type ACPBinding } from "./config.ts";
 
 type EventStream = AsyncIterableIterator<any> & { push(value: any): void; end(): void };
 
-export default function piACPClient(pi: ExtensionAPI): void {
+export default async function piACPClient(pi: ExtensionAPI): Promise<void> {
+  const discoveredProfiles = await loadProfileConfig();
   let client: ACPClient | undefined;
   let profile: ACPProfile | undefined;
   let binding: ACPBinding | undefined;
@@ -49,7 +46,7 @@ export default function piACPClient(pi: ExtensionAPI): void {
     if (ctx) notify(ctx, "ACP mode disabled");
   };
 
-  const models = staticProfiles();
+  const models = discoveredProfiles.profiles.map(({ id, name }) => ({ id, name }));
 
   pi.registerProvider("acp", {
     name: "ACP",
@@ -141,7 +138,7 @@ export default function piACPClient(pi: ExtensionAPI): void {
   pi.on("session_start", async (event: any, ctx: any) => {
     activeUI = ctx.ui;
     activeSessionManager = ctx.sessionManager;
-    const config = await loadConfig(currentCWD());
+    const config = await loadConfig(currentCWD(), discoveredProfiles);
     const selectedModel = ctx.model?.provider === "acp" && typeof ctx.model.id === "string"
       ? ctx.model.id.replace(/^acp\//, "")
       : undefined;
@@ -326,39 +323,4 @@ function abortError(): Error {
   const error = new Error("The ACP request was aborted");
   error.name = "AbortError";
   return error;
-}
-
-function staticProfiles(): Array<{ id: string; name: string }> {
-  const path = process.env.PI_ACP_CONFIG ?? join(homedir(), ".pi", "agent", "acp-profiles.json");
-  try {
-    const value = JSON.parse(readFileSync(path, "utf8"));
-    if (!Array.isArray(value?.profiles)) return [];
-    const profiles = new Map<string, any>();
-    for (const profile of value.profiles) {
-      if (typeof profile?.id === "string") profiles.set(profile.id, profile);
-    }
-    for (const source of Array.isArray(value.sources) ? value.sources : []) {
-      try {
-        const output = execFileSync(source.command, source.args ?? [], {
-          cwd: process.cwd(),
-          encoding: "utf8",
-          maxBuffer: 1024 * 1024,
-          env: { ...process.env, ...(source.env ?? {}) },
-        });
-        const bundle = JSON.parse(output);
-        if (Array.isArray(bundle?.profiles)) {
-          for (const profile of bundle.profiles) {
-            if (typeof profile?.id === "string") profiles.set(profile.id, profile);
-          }
-        }
-      } catch {
-        // Profile discovery is refreshed asynchronously during session_start.
-      }
-    }
-    return [...profiles.values()]
-      .filter((profile: any) => typeof profile?.id === "string" && typeof profile?.name === "string")
-      .map((profile: any) => ({ id: profile.id, name: profile.name }));
-  } catch {
-    return [];
-  }
 }
